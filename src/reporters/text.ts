@@ -67,22 +67,53 @@ function colorByCategoryScore(score: number, text: string): string {
 
 function scoreLabel(score: number): string {
   if (score >= 80) return green("READY");
-  if (score >= 50) return green("GOOD");
+  if (score >= 50) return yellow("GOOD");
   if (score >= 25) return yellow("NEEDS WORK");
   return red("NOT READY");
 }
 
 // ── Category summary line ─────────────────────────────────────────────────────
 
+const CHECK_SHORT_LABEL: Record<string, string> = {
+  has_agents_md: "AGENTS.md",
+  has_claude_md: "CLAUDE.md",
+  has_readme: "README",
+  has_contributing: "CONTRIBUTING.md",
+  has_architecture_docs: "architecture docs",
+  has_docs_dir: "docs/",
+  has_tsconfig: "tsconfig.json",
+  has_env_example: ".env.example",
+  has_package_json: "package.json",
+  has_lockfile: "lockfile",
+  has_lint_script: "lint",
+  has_typecheck_script: "typecheck",
+  has_build_script: "build",
+  has_test_script: "test script",
+  has_test_dir: "test dir",
+  has_test_files: "test files",
+  has_ci_workflows: "CI workflows",
+};
+
+function shortLabel(checkId: string, fallbackLabel: string): string {
+  return CHECK_SHORT_LABEL[checkId] ?? fallbackLabel.replace(/ (present|exists?)\s*$/i, "");
+}
+
 function categoryFindingSummary(cat: CategoryScore): string {
   if (cat.failingChecks.length === 0) {
-    return cat.id === "tooling"
-      ? "package.json ✓  lockfile ✓  scripts ✓"
-      : "All checks passed";
+    if (cat.id === "tooling") {
+      return "package.json ✓  lockfile ✓  scripts ✓";
+    }
+    // Build evidence-grounded passing summary from top passing checks
+    const top = cat.checks
+      .slice()
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, 3)
+      .map((c) => `${shortLabel(c.id, c.label)} ✓`);
+    return top.join("  ");
   }
   const missing = cat.failingChecks
     .slice(0, 2)
-    .map((c) => c.label)
+    .map((c) => shortLabel(c.id, c.label))
     .join(", ");
   return `Missing: ${missing}`;
 }
@@ -105,7 +136,7 @@ function effortLabel(effort: string): string {
 // ── Main reporter ─────────────────────────────────────────────────────────────
 
 export function reportText(report: AuditReport): void {
-  const { scoring, input } = report;
+  const { scoring } = report;
   const { overallScore, categoryScores, topBlockers, fixPlan } = scoring;
   const out = (s: string) => process.stdout.write(s + "\n");
 
@@ -122,7 +153,7 @@ export function reportText(report: AuditReport): void {
   for (const cat of categoryScores) {
     const label = cat.label.padEnd(CAT_LABEL_WIDTH);
     const bar = categoryBar(cat.score);
-    const scoreStr = `${cat.score.toFixed(1)} / 5`;
+    const scoreStr = `${Number.isInteger(cat.score) ? cat.score : cat.score.toFixed(1)} / 5`;
     const summary = categoryFindingSummary(cat);
     out(`  ${label}  ${bar}  ${scoreStr}   ${summary}`);
   }
@@ -157,7 +188,7 @@ export function reportText(report: AuditReport): void {
     out(rule());
     out("");
     out(
-      `  Run ${cyan("agent-harness audit " + input.path + " --write-artifacts")} to generate starter files.`
+      `  Run ${cyan("agent-harness audit . --write-artifacts")} to generate starter files.`
     );
   }
 
