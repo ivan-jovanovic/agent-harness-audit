@@ -1,4 +1,7 @@
+import { stat } from "fs/promises";
+import { dirname } from "path";
 import type { AuditInput, AuditReport } from "../types.js";
+import { AuditUsageError } from "../types.js";
 import { collectEvidence } from "../inspection/local.js";
 import { scoreProject } from "../scoring/index.js";
 import { reportText } from "../reporters/text.js";
@@ -11,6 +14,20 @@ function step(label: string): void {
 
 export async function runAuditCommand(input: AuditInput): Promise<void> {
   const isJson = input.jsonMode;
+
+  // Validate --output parent directory exists before doing any work
+  if (input.outputFile) {
+    const outputDir = dirname(input.outputFile);
+    try {
+      const s = await stat(outputDir);
+      if (!s.isDirectory()) {
+        throw new AuditUsageError(`output directory does not exist: ${outputDir}`);
+      }
+    } catch (err) {
+      if (err instanceof AuditUsageError) throw err;
+      throw new AuditUsageError(`output directory does not exist: ${outputDir}`);
+    }
+  }
 
   if (!isJson) {
     process.stdout.write(`agent-harness v0.1.0  \u2014  Agent-readiness audit for AI coding tools\n\n`);

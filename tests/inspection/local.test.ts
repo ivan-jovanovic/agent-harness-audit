@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { join } from "path";
 import { fileURLToPath } from "url";
 import { collectEvidence } from "../../src/inspection/local.js";
+import { AuditUsageError } from "../../src/types.js";
 
 const fixturesDir = join(fileURLToPath(import.meta.url), "../../../fixtures");
 
@@ -90,29 +91,23 @@ describe("collectEvidence — ts-webapp fixture", () => {
 });
 
 describe("collectEvidence — error handling", () => {
-  it("exits with code 2 for missing path", async () => {
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("process.exit called");
-    }) as never);
+  it("throws AuditUsageError for missing path", async () => {
+    await expect(
+      collectEvidence("/nonexistent/path/does/not/exist")
+    ).rejects.toThrow(AuditUsageError);
 
     await expect(
       collectEvidence("/nonexistent/path/does/not/exist")
-    ).rejects.toThrow("process.exit called");
-
-    expect(exitSpy).toHaveBeenCalledWith(2);
-    exitSpy.mockRestore();
+    ).rejects.toThrow("path not found");
   });
 
-  it("exits with code 2 for a file path (not a directory)", async () => {
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("process.exit called");
-    }) as never);
+  it("throws AuditUsageError for a file path (not a directory)", async () => {
+    await expect(
+      collectEvidence(join(fixturesDir, "minimal/package.json"))
+    ).rejects.toThrow(AuditUsageError);
 
     await expect(
       collectEvidence(join(fixturesDir, "minimal/package.json"))
-    ).rejects.toThrow("process.exit called");
-
-    expect(exitSpy).toHaveBeenCalledWith(2);
-    exitSpy.mockRestore();
+    ).rejects.toThrow("path is not a directory");
   });
 });

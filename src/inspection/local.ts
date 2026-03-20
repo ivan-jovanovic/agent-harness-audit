@@ -7,6 +7,7 @@ import type {
   WorkflowSignals,
   ContextSignals,
 } from "../types.js";
+import { AuditUsageError } from "../types.js";
 import { parsePackageSignals } from "./package.js";
 
 async function exists(p: string): Promise<boolean> {
@@ -199,13 +200,11 @@ export async function collectEvidence(projectPath: string): Promise<RepoEvidence
   try {
     pathStat = await stat(projectPath);
   } catch {
-    process.stderr.write(`Error: path not found: ${projectPath}\n`);
-    process.exit(2);
+    throw new AuditUsageError(`path not found: ${projectPath}`);
   }
 
   if (!pathStat.isDirectory()) {
-    process.stderr.write(`Error: path is not a directory: ${projectPath}\n`);
-    process.exit(2);
+    throw new AuditUsageError(`path is not a directory: ${projectPath}`);
   }
 
   const [files, packages, tests, workflows, context] = await Promise.all([
@@ -216,5 +215,7 @@ export async function collectEvidence(projectPath: string): Promise<RepoEvidence
     collectContextSignals(projectPath),
   ]);
 
-  return { files, packages, tests, workflows, context };
+  const warnings = [...packages.warnings];
+
+  return { files, packages, tests, workflows, context, warnings };
 }

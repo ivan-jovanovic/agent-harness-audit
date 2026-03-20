@@ -143,9 +143,17 @@ function effortLabel(effort: string): string {
 // ── Main reporter ─────────────────────────────────────────────────────────────
 
 export function reportText(report: AuditReport): void {
-  const { scoring } = report;
+  const { scoring, evidence } = report;
   const { overallScore, categoryScores, topBlockers, fixPlan } = scoring;
   const out = (s: string) => process.stdout.write(s + "\n");
+
+  // ── Warnings (if any) ─────────────────────────────────────────────────────
+  if (evidence.warnings.length > 0) {
+    for (const w of evidence.warnings) {
+      out(`  ⚠  ${w}`);
+    }
+    out("");
+  }
 
   // ── Zone 1: Score banner ──────────────────────────────────────────────────
   out(rule());

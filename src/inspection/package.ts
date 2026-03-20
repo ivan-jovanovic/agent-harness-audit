@@ -25,6 +25,7 @@ export async function parsePackageSignals(projectPath: string): Promise<PackageS
   }
 
   const scripts = { hasLint: false, hasTypecheck: false, hasTest: false, hasBuild: false };
+  const warnings: string[] = [];
 
   if (hasPackageJson) {
     try {
@@ -36,9 +37,9 @@ export async function parsePackageSignals(projectPath: string): Promise<PackageS
       scripts.hasTest = "test" in s;
       scripts.hasBuild = "build" in s;
     } catch {
-      // malformed package.json — treat scripts as absent
+      warnings.push("package.json exists but could not be parsed");
     }
   }
 
-  return { hasPackageJson, hasLockfile, lockfileType, scripts };
+  return { hasPackageJson, hasLockfile, lockfileType, scripts, warnings };
 }
