@@ -1,0 +1,10 @@
+{
+  "name": "partial-fixture",
+  "version": "0.1.0",
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0"
+  }
+}
