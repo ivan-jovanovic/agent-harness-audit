@@ -31,6 +31,8 @@ function bold(s: string): string {
 
 const RULE_WIDTH = 53;
 const RULE = "─".repeat(RULE_WIDTH);
+// Category line prefix: 2 + CAT_LABEL_WIDTH(14) + 2 + bar(5) + 2 + scoreStr(7) + 3 = 35
+const SUMMARY_MAX_WIDTH = 80 - 35;
 
 function rule(): string {
   return RULE;
@@ -94,6 +96,11 @@ const CHECK_SHORT_LABEL: Record<string, string> = {
   has_ci_workflows: "CI workflows",
 };
 
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + "…";
+}
+
 function shortLabel(checkId: string, fallbackLabel: string): string {
   return CHECK_SHORT_LABEL[checkId] ?? fallbackLabel.replace(/ (present|exists?)\s*$/i, "");
 }
@@ -154,7 +161,7 @@ export function reportText(report: AuditReport): void {
     const label = cat.label.padEnd(CAT_LABEL_WIDTH);
     const bar = categoryBar(cat.score);
     const scoreStr = `${Number.isInteger(cat.score) ? cat.score : cat.score.toFixed(1)} / 5`;
-    const summary = categoryFindingSummary(cat);
+    const summary = truncate(categoryFindingSummary(cat), SUMMARY_MAX_WIDTH);
     out(`  ${label}  ${bar}  ${scoreStr}   ${summary}`);
   }
   out("");

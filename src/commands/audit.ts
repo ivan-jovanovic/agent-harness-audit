@@ -18,9 +18,9 @@ export async function runAuditCommand(input: AuditInput): Promise<void> {
   }
 
   // Collect evidence with progress steps
-  if (!isJson) step("Scanning project structure...  done");
   const evidence = await collectEvidence(input.path);
   if (!isJson) {
+    step("Scanning project structure...  done");
     step("Reading package.json...        done");
     step("Checking docs and instructions...  done");
     step("Checking test signals...       done");
