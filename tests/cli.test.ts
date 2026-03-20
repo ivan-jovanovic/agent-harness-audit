@@ -87,6 +87,17 @@ describe("CLI integration", () => {
     expect(stdout).toContain("Safety");
   });
 
+  it("category Missing: lines do not include 'present' or 'exists' suffix (THU-89)", () => {
+    const { stdout } = run(["audit", resolve(FIXTURES, "minimal")]);
+    const missingLines = stdout.split("\n").filter((l) => l.includes("Missing:"));
+    expect(missingLines.length).toBeGreaterThan(0);
+    for (const line of missingLines) {
+      const afterMissing = line.slice(line.indexOf("Missing:") + "Missing:".length);
+      expect(afterMissing).not.toMatch(/\bpresent\b/i);
+      expect(afterMissing).not.toMatch(/\bexists?\b/i);
+    }
+  });
+
   it("minimal fixture scores very low (under 20/100)", () => {
     const { stdout } = run(["audit", resolve(FIXTURES, "minimal")]);
     const match = stdout.match(/Agent Harness Score:\s*(\d+)\s*\/\s*100/);
