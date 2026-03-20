@@ -7,13 +7,13 @@ Scans a repository and produces a scored report across five categories — **ins
 ## Install
 
 ```bash
-npm install -g agent-harness
+npm install -g agent-harness-cli
 ```
 
 Or run directly with npx:
 
 ```bash
-npx agent-harness audit .
+npx agent-harness-cli audit .
 ```
 
 ## Usage
