@@ -196,14 +196,26 @@ function buildTokens(projectPath: string, evidence: RepoEvidence, input: AuditIn
 
 // ── Guard check ───────────────────────────────────────────────────────────────
 
-function isGuarded(projectPath: string, def: ArtifactDef): boolean {
-  const generatedPath = join(projectPath, def.filename);
-  if (existsSync(generatedPath)) return true;
+/**
+ * Returns true if a canonical file exists (e.g. AGENTS.md), meaning the
+ * generated file should be skipped entirely — no write attempt needed.
+ * Used only for the canonical-file guard; the generated-file guard is
+ * handled atomically via the `wx` write flag.
+ */
+function isCanonicalGuarded(projectPath: string, def: ArtifactDef): boolean {
   if (def.canonicalFilename) {
-    const canonicalPath = join(projectPath, def.canonicalFilename);
-    if (existsSync(canonicalPath)) return true;
+    return existsSync(join(projectPath, def.canonicalFilename));
   }
   return false;
+}
+
+/**
+ * Returns true if either the generated file or canonical file already exists.
+ * Used for dry-run / preview only — not for the actual write path.
+ */
+function isGuarded(projectPath: string, def: ArtifactDef): boolean {
+  if (existsSync(join(projectPath, def.filename))) return true;
+  return isCanonicalGuarded(projectPath, def);
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
@@ -227,9 +239,9 @@ export async function generateArtifacts(
   for (const def of ARTIFACT_DEFS) {
     const content = renderTemplate(def.template, tokens);
     const targetPath = join(projectPath, def.filename);
-    const guarded = isGuarded(projectPath, def);
 
     if (dryRun) {
+      const guarded = isGuarded(projectPath, def);
       results.push({
         id: def.id,
         filename: def.filename,
@@ -240,6 +252,10 @@ export async function generateArtifacts(
       });
       continue;
     }
+
+    // Non-dry-run: only pre-check the canonical file (e.g. AGENTS.md).
+    // The generated-file check is handled atomically via the wx flag below.
+    const guarded = isCanonicalGuarded(projectPath, def);
 
     if (guarded) {
       process.stderr.write(
@@ -256,15 +272,35 @@ export async function generateArtifacts(
       continue;
     }
 
-    await writeFile(targetPath, content, "utf-8");
-    results.push({
-      id: def.id,
-      filename: def.filename,
-      targetPath,
-      skipped: false,
-      written: true,
-      content,
-    });
+    // Atomic write: O_CREAT | O_EXCL — fails with EEXIST if file was created
+    // by another process between the canonical guard check above and now.
+    try {
+      await writeFile(targetPath, content, { encoding: "utf-8", flag: "wx" });
+      results.push({
+        id: def.id,
+        filename: def.filename,
+        targetPath,
+        skipped: false,
+        written: true,
+        content,
+      });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+        process.stderr.write(
+          `agent-harness: skipping ${def.filename} — file already exists\n`,
+        );
+        results.push({
+          id: def.id,
+          filename: def.filename,
+          targetPath,
+          skipped: true,
+          written: false,
+          content,
+        });
+      } else {
+        throw err;
+      }
+    }
   }
 
   return results;

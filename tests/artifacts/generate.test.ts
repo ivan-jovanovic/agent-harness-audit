@@ -19,6 +19,7 @@ const BASE_EVIDENCE: RepoEvidence = {
     hasPackageJson: false,
     hasLockfile: false,
     scripts: { hasLint: false, hasTypecheck: false, hasTest: false, hasBuild: false },
+    warnings: [],
   },
   tests: {
     hasTestDir: false,
@@ -29,6 +30,7 @@ const BASE_EVIDENCE: RepoEvidence = {
   },
   workflows: { hasCIWorkflows: false, workflowCount: 0 },
   context: { hasTsConfig: false, detectedLanguage: "typescript", hasEslintConfig: false },
+  warnings: [],
 };
 
 const BASE_INPUT: AuditInput = {
