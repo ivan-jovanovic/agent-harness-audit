@@ -196,19 +196,17 @@ describe("scoreFeedback — partial fixture", () => {
 });
 
 describe("scoreFeedback — strong fixture", () => {
-  it("passes test_script, test_dir, and ci_workflows but not has_test_files (no root-level *.test.* files)", async () => {
+  it("passes all feedback checks including has_test_files (test files found in tests/ directory)", async () => {
     const ev = await collectEvidence(join(fixturesDir, "strong"));
     const result = scoreFeedback(ev);
     const passingIds = result.checks.filter((c) => c.passed).map((c) => c.id);
     expect(passingIds).toContain("has_test_script");
     expect(passingIds).toContain("has_test_dir");
     expect(passingIds).toContain("has_ci_workflows");
-    expect(passingIds).not.toContain("has_test_files");
-    // score = (0.25 + 0.30 + 0.30) / 1.0 * 5 = 0.85 * 5 = 4.25 → Math.round(42.5) = 43 → 4.3
-    expect(result.score).toBe(4.3);
-    expect(result.failingChecks).toHaveLength(1);
-    expect(result.failingChecks[0].id).toBe("has_test_files");
-    expect(result.failingChecks[0].failureNote).toBeTruthy();
+    expect(passingIds).toContain("has_test_files");
+    // score = (0.25 + 0.30 + 0.30 + 0.15) / 1.0 * 5 = 5.0
+    expect(result.score).toBe(5);
+    expect(result.failingChecks).toHaveLength(0);
   });
 });
 
@@ -336,22 +334,18 @@ describe("scoreProject — minimal fixture", () => {
 });
 
 describe("scoreProject — strong fixture", () => {
-  it("scores 97 (has_test_files not present at root drops feedback slightly)", async () => {
+  it("scores 100 (all checks pass including has_test_files in tests/ directory)", async () => {
     const ev = await collectEvidence(join(fixturesDir, "strong"));
     const result = scoreProject(ev, { tool: "other" });
-    // feedback score is 4.3 (not 5) because has_test_files checks root-level *.test.* files
-    // overall = (5/5*0.25 + 5/5*0.20 + 5/5*0.20 + 4.3/5*0.25 + 5/5*0.10) * 100 = 96.5 → 97
-    expect(result.overallScore).toBe(97);
+    // all checks pass: overall = (5/5*0.25 + 5/5*0.20 + 5/5*0.20 + 5/5*0.25 + 5/5*0.10) * 100 = 100
+    expect(result.overallScore).toBe(100);
   });
 
-  it("has 1 topBlocker (has_test_files) and 1 fixPlan entry", async () => {
+  it("has 0 topBlockers and 0 fixPlan entries", async () => {
     const ev = await collectEvidence(join(fixturesDir, "strong"));
     const result = scoreProject(ev, { tool: "other" });
-    expect(result.topBlockers).toHaveLength(1);
-    expect(result.topBlockers[0].checkId).toBe("has_test_files");
-    expect(result.fixPlan).toHaveLength(1);
-    expect(result.fixPlan[0].checkId).toBe("has_test_files");
-    expect(result.fixPlan[0].effort).toBe("medium");
+    expect(result.topBlockers).toHaveLength(0);
+    expect(result.fixPlan).toHaveLength(0);
   });
 });
 

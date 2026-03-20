@@ -79,15 +79,27 @@ async function collectTestSignals(projectPath: string): Promise<TestSignals> {
   );
   const hasTestDir = testDirResults.some(Boolean);
 
-  // Check for *.test.* or *.spec.* files at root level
+  // Check for *.test.* or *.spec.* files at root level and one level into test directories
+  const TEST_FILE_RE = /\.(test|spec)\.[^.]+$/;
   let hasTestFiles = false;
   try {
     const rootEntries = await readdir(projectPath);
-    hasTestFiles = rootEntries.some(
-      (f) => /\.(test|spec)\.[^.]+$/.test(f)
-    );
+    hasTestFiles = rootEntries.some((f) => TEST_FILE_RE.test(f));
   } catch {
     // ignore
+  }
+  if (!hasTestFiles) {
+    for (const dirName of testDirNames) {
+      try {
+        const entries = await readdir(join(projectPath, dirName));
+        if (entries.some((f) => TEST_FILE_RE.test(f))) {
+          hasTestFiles = true;
+          break;
+        }
+      } catch {
+        // directory doesn't exist or can't be read
+      }
+    }
   }
 
   const [hasVitestConfig, hasJestConfig, hasPlaywrightConfig] = await Promise.all([
