@@ -3,6 +3,7 @@ import { collectEvidence } from "../inspection/local.js";
 import { scoreProject } from "../scoring/index.js";
 import { reportText } from "../reporters/text.js";
 import { reportJson } from "../reporters/json.js";
+import { generateArtifacts, previewArtifacts } from "../artifacts/generate.js";
 
 function step(label: string): void {
   process.stdout.write(`  ${label}\n`);
@@ -31,6 +32,14 @@ export async function runAuditCommand(input: AuditInput): Promise<void> {
   // Score
   const scoring = scoreProject(evidence, { tool: input.tool });
 
+  // Generate artifacts
+  let artifacts;
+  if (input.writeArtifacts) {
+    artifacts = await generateArtifacts(input.path, evidence, input, false);
+  } else {
+    artifacts = previewArtifacts(input.path, evidence, input);
+  }
+
   // Build report
   const report: AuditReport = {
     version: "1",
@@ -38,7 +47,7 @@ export async function runAuditCommand(input: AuditInput): Promise<void> {
     input,
     evidence,
     scoring,
-    artifacts: [],
+    artifacts,
   };
 
   // Output
@@ -46,6 +55,22 @@ export async function runAuditCommand(input: AuditInput): Promise<void> {
     await reportJson(report, input.outputFile);
   } else {
     reportText(report);
+    if (input.writeArtifacts) {
+      const written = artifacts.filter((a) => a.written);
+      const skipped = artifacts.filter((a) => a.skipped);
+      if (written.length > 0) {
+        process.stdout.write(`\nGenerated ${written.length} starter file(s):\n`);
+        for (const a of written) {
+          process.stdout.write(`  ✓ ${a.filename}\n`);
+        }
+      }
+      if (skipped.length > 0) {
+        process.stdout.write(`\nSkipped ${skipped.length} file(s) (already exist):\n`);
+        for (const a of skipped) {
+          process.stdout.write(`  — ${a.filename}\n`);
+        }
+      }
+    }
   }
 
   process.exit(0);
