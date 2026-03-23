@@ -1,0 +1,8 @@
+src/
+tests/
+fixtures/
+*.md
+tsconfig.json
+vitest.config.ts
+.eslintrc.json
+agent-harness-audit/

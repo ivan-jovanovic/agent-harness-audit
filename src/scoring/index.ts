@@ -142,8 +142,16 @@ export function scoreProject(
   // Sort by impact descending
   allFailing.sort((a, b) => b.impact - a.impact);
 
+  // Deduplicate by checkId — keep first occurrence (highest impact after sort)
+  const seen = new Set<string>();
+  const dedupedFailing = allFailing.filter((entry) => {
+    if (seen.has(entry.checkId)) return false;
+    seen.add(entry.checkId);
+    return true;
+  });
+
   // Top 3 blockers
-  const topBlockers: Blocker[] = allFailing.slice(0, 3).map((entry) => ({
+  const topBlockers: Blocker[] = dedupedFailing.slice(0, 3).map((entry) => ({
     categoryId: entry.categoryId,
     checkId: entry.checkId,
     title: BLOCKER_TITLE_TABLE[entry.checkId] ?? entry.checkId,
@@ -152,8 +160,8 @@ export function scoreProject(
     effort: EFFORT_TABLE[entry.checkId] ?? "medium",
   }));
 
-  // Fix plan: all failing checks in impact order
-  const fixPlan: FixItem[] = allFailing.map((entry, index) => ({
+  // Fix plan: all failing checks in impact order (deduplicated)
+  const fixPlan: FixItem[] = dedupedFailing.map((entry, index) => ({
     categoryId: entry.categoryId,
     checkId: entry.checkId,
     action: ACTION_TABLE[entry.checkId] ?? `Fix ${entry.checkId}`,
