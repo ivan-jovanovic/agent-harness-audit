@@ -264,7 +264,7 @@ describe("scoreContext — minimal fixture", () => {
     const result = scoreContext(ev);
     expect(result.id).toBe("context");
     expect(result.score).toBe(0);
-    expect(result.failingChecks).toHaveLength(5);
+    expect(result.failingChecks).toHaveLength(6);
     expect(result.failingChecks.every((c) => c.failureNote)).toBe(true);
   });
 });
@@ -276,6 +276,7 @@ describe("scoreContext — strong fixture", () => {
     expect(result.score).toBe(5);
     expect(result.failingChecks).toHaveLength(0);
     expect(result.checks.find((c) => c.id === "has_docs_index")!.passed).toBe(true);
+    expect(result.checks.find((c) => c.id === "has_structured_docs")!.passed).toBe(true);
   });
 });
 
@@ -284,7 +285,7 @@ describe("scoreContext — partial fixture", () => {
     const ev = await collectEvidence(join(fixturesDir, "partial"));
     const result = scoreContext(ev);
     expect(result.score).toBe(0);
-    expect(result.failingChecks).toHaveLength(5);
+    expect(result.failingChecks).toHaveLength(6);
   });
 });
 
@@ -295,6 +296,7 @@ describe("scoreContext — ts-webapp fixture", () => {
     expect(result.score).toBe(5);
     expect(result.failingChecks).toHaveLength(0);
     expect(result.checks.find((c) => c.id === "has_docs_index")!.passed).toBe(true);
+    expect(result.checks.find((c) => c.id === "has_structured_docs")!.passed).toBe(true);
   });
 });
 
@@ -306,31 +308,35 @@ describe("scoreTooling — minimal fixture", () => {
     const result = scoreTooling(ev);
     expect(result.id).toBe("tooling");
     expect(result.checks.filter((c) => c.passed).map((c) => c.id)).toEqual(["has_package_json"]);
-    // score = 0.20 / 1.0 * 5 = 1.0
-    expect(result.score).toBe(1);
-    expect(result.failingChecks).toHaveLength(4);
+    // score = 0.10 / 1.0 * 5 = 0.5
+    expect(result.score).toBe(0.5);
+    expect(result.failingChecks).toHaveLength(6);
     expect(result.failingChecks.every((c) => c.failureNote)).toBe(true);
   });
 });
 
 describe("scoreTooling — partial fixture", () => {
-  it("passes package_json, lockfile, and test script only", async () => {
+  it("passes package_json and lockfile only", async () => {
     const ev = await collectEvidence(join(fixturesDir, "partial"));
     const result = scoreTooling(ev);
     const passingIds = result.checks.filter((c) => c.passed).map((c) => c.id);
     expect(passingIds).toContain("has_package_json");
     expect(passingIds).toContain("has_lockfile");
+    expect(passingIds).not.toContain("has_local_dev_boot_path");
+    expect(passingIds).not.toContain("has_architecture_lints");
     expect(passingIds).not.toContain("has_lint_script");
     expect(passingIds).not.toContain("has_typecheck_script");
     expect(passingIds).not.toContain("has_build_script");
-    // score = 0.40 / 1.0 * 5 = 2.0
-    expect(result.score).toBe(2);
+    // score = 0.20 / 1.0 * 5 = 1.0
+    expect(result.score).toBe(1);
   });
 });
 
 describe("scoreTooling — strong fixture", () => {
   it("scores 5 when all tooling checks pass", async () => {
     const ev = await collectEvidence(join(fixturesDir, "strong"));
+    expect(ev.packages.hasArchitectureLints).toBe(true);
+    expect(ev.packages.scripts.hasLocalDevBootPath).toBe(true);
     const result = scoreTooling(ev);
     expect(result.score).toBe(5);
     expect(result.failingChecks).toHaveLength(0);
@@ -340,6 +346,8 @@ describe("scoreTooling — strong fixture", () => {
 describe("scoreTooling — ts-webapp fixture", () => {
   it("scores 5 when all tooling checks pass", async () => {
     const ev = await collectEvidence(join(fixturesDir, "ts-webapp"));
+    expect(ev.packages.hasArchitectureLints).toBe(true);
+    expect(ev.packages.scripts.hasLocalDevBootPath).toBe(true);
     const result = scoreTooling(ev);
     expect(result.score).toBe(5);
     expect(result.failingChecks).toHaveLength(0);
@@ -354,8 +362,19 @@ describe("scoreFeedback — minimal fixture", () => {
     const result = scoreFeedback(ev);
     expect(result.id).toBe("feedback");
     expect(result.score).toBe(0);
-    expect(result.failingChecks).toHaveLength(3);
+    expect(result.failingChecks).toHaveLength(6);
     expect(result.failingChecks.every((c) => c.failureNote)).toBe(true);
+  });
+});
+
+describe("scoreFeedback — missing pipeline note", () => {
+  it("explains that CI pipeline is missing when validation is absent", async () => {
+    const ev = await collectEvidence(join(fixturesDir, "minimal"));
+    const result = scoreFeedback(ev);
+    const ciValidation = result.checks.find((c) => c.id === "has_ci_validation")!;
+    expect(ciValidation.passed).toBe(false);
+    expect(ciValidation.failureNote).toContain("No CI pipeline found");
+    expect(ciValidation.failureNote).not.toContain("pipeline exists");
   });
 });
 
@@ -366,8 +385,65 @@ describe("scoreFeedback — partial fixture", () => {
     const passingIds = result.checks.filter((c) => c.passed).map((c) => c.id);
     expect(passingIds).toContain("has_test_script");
     expect(passingIds).toContain("has_test_dir");
-    // score = (0.25 + 0.30) / 0.70 * 5 = 3.928... → 3.9
-    expect(result.score).toBe(3.9);
+    expect(passingIds).not.toContain("has_ci_validation");
+    expect(passingIds).not.toContain("has_ci_pipeline");
+    expect(passingIds).not.toContain("has_e2e_or_smoke_tests");
+    // score = (0.20 + 0.25) / 1.0 * 5 = 2.25 → 2.3
+    expect(result.score).toBe(2.3);
+    expect(result.failingChecks).toHaveLength(4);
+  });
+});
+
+describe("scoreFeedback — GitLab pipeline only", () => {
+  it("passes CI pipeline but not validation when only .gitlab-ci.yml exists", async () => {
+    const dir = makeRepo({
+      ".gitlab-ci.yml": [
+        "stages:",
+        "  - deploy",
+        "",
+        "deploy:",
+        "  stage: deploy",
+        "  script:",
+        "    - echo deploy",
+        "",
+      ].join("\n"),
+    });
+    try {
+      const ev = await collectEvidence(dir);
+      const result = scoreFeedback(ev);
+      expect(result.checks.find((c) => c.id === "has_ci_pipeline")!.passed).toBe(true);
+      expect(result.checks.find((c) => c.id === "has_ci_validation")!.passed).toBe(false);
+      expect(result.score).toBe(0.5);
+    } finally {
+      cleanupRepo(dir);
+    }
+  });
+});
+
+describe("scoreFeedback — GitHub scheduled workflow", () => {
+  it("counts validation commands even when the workflow is not push or pull_request triggered", async () => {
+    const dir = makeRepo({
+      ".github/workflows/ci.yml": [
+        "name: ci",
+        "on:",
+        "  schedule:",
+        "    - cron: '0 0 * * *'",
+        "jobs:",
+        "  test:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: npm run test",
+        "",
+      ].join("\n"),
+    });
+    try {
+      const ev = await collectEvidence(dir);
+      const result = scoreFeedback(ev);
+      expect(result.checks.find((c) => c.id === "has_ci_pipeline")!.passed).toBe(true);
+      expect(result.checks.find((c) => c.id === "has_ci_validation")!.passed).toBe(true);
+    } finally {
+      cleanupRepo(dir);
+    }
   });
 });
 
@@ -379,21 +455,27 @@ describe("scoreFeedback — strong fixture", () => {
     expect(passingIds).toContain("has_test_script");
     expect(passingIds).toContain("has_test_dir");
     expect(passingIds).toContain("has_test_files");
-    // score = (0.25 + 0.30 + 0.15) / 0.70 * 5 = 5.0
+    expect(passingIds).toContain("has_e2e_or_smoke_tests");
+    expect(passingIds).toContain("has_ci_pipeline");
+    expect(passingIds).toContain("has_ci_validation");
+    // score = 5.0
     expect(result.score).toBe(5);
     expect(result.failingChecks).toHaveLength(0);
   });
 });
 
 describe("scoreFeedback — ts-webapp fixture", () => {
-  it("passes test_script and test_dir but not has_test_files", async () => {
+  it("passes test_script, test_dir, e2e, and CI validation but not has_test_files", async () => {
     const ev = await collectEvidence(join(fixturesDir, "ts-webapp"));
     const result = scoreFeedback(ev);
     const passingIds = result.checks.filter((c) => c.passed).map((c) => c.id);
     expect(passingIds).toContain("has_test_script");
     expect(passingIds).toContain("has_test_dir");
+    expect(passingIds).toContain("has_e2e_or_smoke_tests");
+    expect(passingIds).toContain("has_ci_pipeline");
+    expect(passingIds).toContain("has_ci_validation");
     expect(passingIds).not.toContain("has_test_files");
-    expect(result.score).toBe(3.9);
+    expect(result.score).toBe(4.3);
     expect(result.failingChecks).toHaveLength(1);
   });
 });
@@ -450,8 +532,8 @@ describe("scoreProject — minimal fixture", () => {
     expect(Number.isInteger(result.overallScore)).toBe(true);
     expect(result.overallScore).toBeGreaterThanOrEqual(0);
     expect(result.overallScore).toBeLessThanOrEqual(100);
-    // minimal: only has_package_json passes → overall = (1.0/5 * 0.25) * 100 = 5
-    expect(result.overallScore).toBe(5);
+    // minimal: only has_package_json passes → overall = (0.5/5 * 0.25) * 100 = 2.5 → 3
+    expect(result.overallScore).toBe(3);
   });
 
   it("returns exactly 5 category scores", async () => {

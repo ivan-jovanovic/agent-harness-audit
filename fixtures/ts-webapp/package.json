@@ -2,6 +2,7 @@
   "name": "ts-webapp-fixture",
   "version": "0.1.0",
   "scripts": {
+    "dev": "next dev",
     "lint": "eslint src --ext .ts,.tsx",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

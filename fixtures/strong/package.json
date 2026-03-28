@@ -2,6 +2,7 @@
   "name": "strong-fixture",
   "version": "0.1.0",
   "scripts": {
+    "dev": "vite",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

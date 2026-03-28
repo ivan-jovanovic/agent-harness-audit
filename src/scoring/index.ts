@@ -39,12 +39,18 @@ const EFFORT_TABLE: Record<string, "quick" | "medium" | "heavy"> = {
   has_env_example: "quick",
   has_package_json: "quick",
   has_lockfile: "quick",
+  has_architecture_lints: "medium",
+  has_local_dev_boot_path: "medium",
   has_lint_script: "medium",
   has_typecheck_script: "quick",
   has_build_script: "quick",
   has_test_script: "medium",
   has_test_dir: "medium",
   has_test_files: "medium",
+  has_ci_pipeline: "medium",
+  has_e2e_or_smoke_tests: "medium",
+  has_structured_docs: "medium",
+  has_ci_validation: "medium",
 };
 
 const ACTION_TABLE: Record<string, string> = {
@@ -60,6 +66,8 @@ const ACTION_TABLE: Record<string, string> = {
     "Add a discoverable architecture guide at the repo root or in docs/ (for example ARCHITECTURE.md, SYSTEM.md, or docs/repo-structure.md) describing key directories, data flow, and major design decisions.",
   has_docs_index:
     "Add a docs index such as docs/index.md or docs/README.md so agents have a clear entrypoint into the repository documentation.",
+  has_structured_docs:
+    "Organize docs/ into topical sections or add multiple docs files so the repository documentation is discoverable and structured.",
   has_docs_dir:
     "Create a docs/ directory and move or start any project documentation there.",
   has_tsconfig:
@@ -70,6 +78,10 @@ const ACTION_TABLE: Record<string, string> = {
     "Run `npm init` (or `pnpm init`) to create package.json at the project root.",
   has_lockfile:
     "Run `npm install` (or your package manager's install command) to generate a lockfile and commit it.",
+  has_architecture_lints:
+    "Add boundary-enforcement tooling such as dependency-cruiser or eslint-plugin-boundaries so architecture rules are checked mechanically.",
+  has_local_dev_boot_path:
+    "Add a local boot script such as `dev`, `start`, `preview`, or `serve` so the agent can run the app during iterative work.",
   has_lint_script:
     'Add a `"lint"` script to package.json. Example: `"lint": "eslint src --ext .ts,.tsx"`.',
   has_typecheck_script:
@@ -82,6 +94,12 @@ const ACTION_TABLE: Record<string, string> = {
     "Create a tests/ directory and add at least one test file. Even a single passing test gives the agent a feedback loop.",
   has_test_files:
     "Add test files alongside your source files (e.g., `src/utils.test.ts`) or inside a dedicated test directory.",
+  has_e2e_or_smoke_tests:
+    "Add an e2e or smoke-test signal such as Playwright/Cypress config, an `e2e/` or `smoke/` test directory, or a dedicated smoke-test script.",
+  has_ci_pipeline:
+    "Add a CI pipeline file such as `.github/workflows/*.yml|yaml` or `.gitlab-ci.yml` so changes are validated in automation.",
+  has_ci_validation:
+    "Add validation commands such as lint, typecheck, build, or test to the existing CI pipeline.",
 };
 
 const BLOCKER_TITLE_TABLE: Record<string, string> = {
@@ -91,17 +109,23 @@ const BLOCKER_TITLE_TABLE: Record<string, string> = {
   has_readme: "No project README",
   has_architecture_docs: "No architecture documentation",
   has_docs_index: "No docs index",
+  has_structured_docs: "No structured docs",
   has_docs_dir: "No docs directory",
   has_tsconfig: "No TypeScript config",
   has_env_example: "No environment variable documentation",
   has_package_json: "No package.json",
   has_lockfile: "No lockfile",
+  has_architecture_lints: "No architecture lints",
+  has_local_dev_boot_path: "No local dev boot path",
   has_lint_script: "No lint script",
   has_typecheck_script: "No typecheck script",
   has_build_script: "No build script",
   has_test_script: "No test script",
   has_test_dir: "No test directory",
   has_test_files: "No test files",
+  has_e2e_or_smoke_tests: "No e2e or smoke tests",
+  has_ci_pipeline: "No CI pipeline",
+  has_ci_validation: "No CI validation",
 };
 
 const TOOL_SPECIFIC_NOTE = "No tool-specific repo-level checks in v2";

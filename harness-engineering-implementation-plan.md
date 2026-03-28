@@ -12,6 +12,12 @@ Implement the harness-engineering audit update in small phases, starting with th
 ### Completed
 
 - [x] `has_docs_index`
+- [x] `has_structured_docs`
+- [x] `has_local_dev_boot_path`
+- [x] `has_ci_validation`
+- [x] `has_e2e_or_smoke_tests`
+- [x] `has_architecture_lints`
+- [x] Monorepo-aware inspection baseline
 
 ### Scope
 
@@ -73,6 +79,100 @@ Add these regular audit checks:
 - all 6 new heuristic checks are implemented and tested
 - output remains backward-compatible
 - no new runtime dependencies
+
+## Phase 1.5 — Hardening From Real-Project Evaluation
+
+### Scope
+
+Address the highest-impact issues found during `portal` evaluation before starting Phase 2:
+- monorepo false negatives
+- GitHub-only CI detection
+- weak structured-docs heuristic
+- weak e2e/smoke detection breadth
+- unstable JSON error shape on deep failures
+
+### What to implement
+
+1. Monorepo-aware inspection baseline
+- Add workspace/package-root discovery in `src/inspection/` for common JS/TS monorepo layouts.
+- Aggregate key signals from discovered package roots:
+  - local boot scripts
+  - architecture lint signals
+  - test/e2e signals
+  - package/lockfile context
+- Keep root-level signals, but allow package-root fallback where appropriate.
+
+2. [x] CI model split and provider expansion
+- Add `has_ci_pipeline` (pipeline exists) and keep `has_ci_validation` (validation commands executed).
+- Support both:
+  - `.github/workflows/*.yml|yaml`
+  - `.gitlab-ci.yml`
+- Reuse shared command-pattern logic for validation command detection.
+
+3. [x] Tighten `has_structured_docs`
+- Require meaningful structure, not just any subdirectory:
+  - non-empty subtree and/or minimum markdown file count across docs tree.
+- Avoid passing empty placeholder directories.
+
+4. [x] Expand `has_e2e_or_smoke_tests`
+- Add recursive directory scan for e2e/smoke paths.
+- Add Cypress/Webdriver naming/config patterns.
+- Keep Playwright signal support.
+
+5. [x] Stabilize `--json` failure output
+- Ensure command failures in JSON mode emit valid JSON error envelopes, not plain-text errors.
+- Include machine-readable fields:
+  - error code
+  - message
+  - agent (when relevant)
+
+### File-level task map
+
+1. Inspection and parsing
+- `src/inspection/local.ts`
+- `src/inspection/package.ts`
+- `src/types.ts`
+
+2. Scoring and check metadata
+- `src/scoring/categories/context.ts`
+- `src/scoring/categories/tooling.ts`
+- `src/scoring/categories/feedback.ts`
+- `src/scoring/index.ts`
+- `src/agents/checks.ts`
+- `src/commands/audit.ts`
+
+3. Reporting and CLI error contract
+- `src/reporters/text.ts`
+- `src/reporters/json.ts`
+- `src/cli.ts`
+
+4. Tests and fixtures
+- `tests/inspection/local.test.ts`
+- `tests/inspection/package.test.ts`
+- `tests/scoring/scoring.test.ts`
+- `tests/cli.test.ts`
+- `tests/commands/audit.deep.test.ts`
+- relevant fixture repos under `fixtures/`
+
+### Out of scope
+
+- no Phase 2 excerpt expansion yet
+- no scoring weight rebalance
+- no hosted telemetry or external APIs
+
+### Validation
+
+- `npm run lint`
+- `npm run typecheck`
+- `npm test`
+- `npm run build`
+
+### Exit criteria
+
+- monorepo-aware fallback signals are active for Phase 1 checks
+- CI checks work for both GitHub and GitLab inputs
+- `has_structured_docs` and `has_e2e_or_smoke_tests` show reduced noise on real repos
+- deep failures in `--json` mode produce valid JSON output
 
 ## Phase 2 — Deep Audit Context Expansion
 
@@ -223,17 +323,19 @@ Only after corpus validation, consider shifting scoring toward harness quality.
 
 Implement in this order:
 1. Phase 1
-2. Phase 2
-3. Phase 3
-4. Phase 4
-5. Phase 5
+2. Phase 1.5
+3. Phase 2
+4. Phase 3
+5. Phase 4
+6. Phase 5
 
 ## Recommended First Deliverable
 
-Ship Phases 1 and 2 together as the first practical update.
+Ship Phases 1 and 1.5 together before starting Phase 2.
 
 Why:
 - adds the highest-signal regular checks
-- makes deep mode materially more useful
+- hardens those checks against real-project false negatives/noise
+- stabilizes JSON failure behavior for automated consumers
 - avoids premature scoring churn
 - keeps implementation risk contained

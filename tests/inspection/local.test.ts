@@ -22,11 +22,15 @@ describe("collectEvidence — minimal fixture", () => {
     // PackageSignals
     expect(ev.packages.hasPackageJson).toBe(true);
     expect(ev.packages.hasLockfile).toBe(false);
+    expect(ev.packages.scripts.hasLocalDevBootPath).toBe(false);
     // TestSignals — all false
     expect(ev.tests.hasTestDir).toBe(false);
     expect(ev.tests.hasTestFiles).toBe(false);
+    expect(ev.tests.hasE2eOrSmokeTests).toBe(false);
     // WorkflowSignals — none
+    expect(ev.workflows.hasCIPipeline).toBe(false);
     expect(ev.workflows.hasCIWorkflows).toBe(false);
+    expect(ev.workflows.hasCIValidation).toBe(false);
     expect(ev.workflows.workflowCount).toBe(0);
     // ContextSignals
     expect(ev.context.hasTsConfig).toBe(false);
@@ -44,8 +48,12 @@ describe("collectEvidence — partial fixture", () => {
     expect(ev.tests.testFramework).toBe("jest");
     expect(ev.packages.hasLockfile).toBe(true);
     expect(ev.packages.lockfileType).toBe("npm");
+    expect(ev.packages.scripts.hasLocalDevBootPath).toBe(false);
     expect(ev.packages.scripts.hasTest).toBe(true);
+    expect(ev.workflows.hasCIPipeline).toBe(false);
     expect(ev.workflows.hasCIWorkflows).toBe(false);
+    expect(ev.workflows.hasCIValidation).toBe(false);
+    expect(ev.tests.hasE2eOrSmokeTests).toBe(false);
   });
 });
 
@@ -59,17 +67,48 @@ describe("collectEvidence — strong fixture", () => {
     expect(ev.files.hasEnvExample).toBe(true);
     expect(ev.files.hasDocsDir).toBe(true);
     expect(ev.files.hasDocsIndex).toBe(true);
+    expect(ev.files.hasStructuredDocs).toBe(true);
     expect(ev.packages.scripts.hasLint).toBe(true);
     expect(ev.packages.scripts.hasTypecheck).toBe(true);
     expect(ev.packages.scripts.hasTest).toBe(true);
     expect(ev.packages.scripts.hasBuild).toBe(true);
+    expect(ev.packages.hasArchitectureLints).toBe(true);
+    expect(ev.packages.scripts.hasLocalDevBootPath).toBe(true);
     expect(ev.tests.hasTestDir).toBe(true);
     expect(ev.tests.hasVitestConfig).toBe(true);
     expect(ev.tests.testFramework).toBe("vitest");
+    expect(ev.workflows.hasCIPipeline).toBe(true);
     expect(ev.workflows.hasCIWorkflows).toBe(true);
+    expect(ev.workflows.hasCIValidation).toBe(true);
     expect(ev.workflows.workflowCount).toBe(1);
+    expect(ev.tests.hasE2eOrSmokeTests).toBe(true);
     expect(ev.context.hasTsConfig).toBe(true);
     expect(ev.context.detectedLanguage).toBe("typescript");
+  });
+});
+
+describe("collectEvidence — structured docs hardening", () => {
+  function makeRepo(): string {
+    return mkdtempSync(join(tmpdir(), "harness-structured-docs-"));
+  }
+
+  function cleanup(dir: string): void {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  it("does not pass on an empty docs subdirectory plus one markdown file", async () => {
+    const dir = makeRepo();
+    try {
+      mkdirSync(join(dir, "docs", "empty"), { recursive: true });
+      writeFileSync(join(dir, "docs", "index.md"), "# docs");
+
+      const ev = await collectEvidence(dir);
+      expect(ev.files.hasDocsDir).toBe(true);
+      expect(ev.files.hasDocsIndex).toBe(true);
+      expect(ev.files.hasStructuredDocs).toBe(false);
+    } finally {
+      cleanup(dir);
+    }
   });
 });
 
@@ -82,14 +121,84 @@ describe("collectEvidence — ts-webapp fixture", () => {
     expect(ev.files.hasDocsDir).toBe(true);
     expect(ev.files.hasArchitectureDocs).toBe(true);
     expect(ev.files.hasDocsIndex).toBe(true);
+    expect(ev.files.hasStructuredDocs).toBe(true);
     expect(ev.context.detectedFramework).toBe("next");
     expect(ev.context.detectedLanguage).toBe("typescript");
     expect(ev.context.hasTsConfig).toBe(true);
     expect(ev.packages.hasLockfile).toBe(true);
     expect(ev.packages.lockfileType).toBe("pnpm");
+    expect(ev.packages.hasArchitectureLints).toBe(true);
+    expect(ev.packages.scripts.hasLocalDevBootPath).toBe(true);
     expect(ev.tests.hasTestDir).toBe(true);
     expect(ev.tests.hasVitestConfig).toBe(true);
+    expect(ev.workflows.hasCIPipeline).toBe(true);
     expect(ev.workflows.hasCIWorkflows).toBe(true);
+    expect(ev.workflows.hasCIValidation).toBe(true);
+    expect(ev.tests.hasE2eOrSmokeTests).toBe(true);
+  });
+});
+
+describe("collectEvidence — GitLab CI coverage", () => {
+  function makeRepo(): string {
+    return mkdtempSync(join(tmpdir(), "harness-gitlab-ci-"));
+  }
+
+  function cleanup(dir: string): void {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  it("detects a GitLab pipeline without validation commands", async () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(
+        join(dir, ".gitlab-ci.yml"),
+        [
+          "stages:",
+          "  - deploy",
+          "",
+          "deploy:",
+          "  stage: deploy",
+          "  script:",
+          "    - echo deploy",
+          "",
+        ].join("\n"),
+      );
+
+      const ev = await collectEvidence(dir);
+      expect(ev.workflows.hasCIPipeline).toBe(true);
+      expect(ev.workflows.hasCIWorkflows).toBe(true);
+      expect(ev.workflows.hasCIValidation).toBe(false);
+      expect(ev.workflows.workflowCount).toBe(1);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("detects validation commands in GitLab CI", async () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(
+        join(dir, ".gitlab-ci.yml"),
+        [
+          "stages:",
+          "  - test",
+          "",
+          "test:",
+          "  stage: test",
+          "  script:",
+          "    - npm run test",
+          "",
+        ].join("\n"),
+      );
+
+      const ev = await collectEvidence(dir);
+      expect(ev.workflows.hasCIPipeline).toBe(true);
+      expect(ev.workflows.hasCIWorkflows).toBe(true);
+      expect(ev.workflows.hasCIValidation).toBe(true);
+      expect(ev.workflows.workflowCount).toBe(1);
+    } finally {
+      cleanup(dir);
+    }
   });
 });
 
@@ -203,6 +312,100 @@ describe("collectEvidence — architecture docs detection", () => {
       const ev = await collectEvidence(dir);
       expect(ev.files.hasArchitectureDocs).toBe(true);
       expect(ev.files.hasDocsDir).toBe(true);
+    } finally {
+      cleanup(dir);
+    }
+  });
+});
+
+describe("collectEvidence — monorepo aggregation", () => {
+  function makeRepo(): string {
+    return mkdtempSync(join(tmpdir(), "harness-mono-evidence-"));
+  }
+
+  function cleanup(dir: string): void {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  it("collects package-root signals when the repo root has no package.json", async () => {
+    const dir = makeRepo();
+    try {
+      mkdirSync(join(dir, "backend"), { recursive: true });
+      mkdirSync(join(dir, "frontend", "e2e"), { recursive: true });
+
+      writeFileSync(
+        join(dir, "backend", "package.json"),
+        JSON.stringify(
+          {
+            name: "backend",
+            scripts: {
+              dev: "vite",
+              lint: "eslint src --ext .ts",
+            },
+            devDependencies: {
+              "dependency-cruiser": "^15.0.0",
+            },
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+      writeFileSync(join(dir, "backend", "package-lock.json"), "{}", "utf-8");
+      writeFileSync(
+        join(dir, "frontend", "package.json"),
+        JSON.stringify(
+          {
+            name: "frontend",
+            scripts: {
+              test: "vitest run",
+            },
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+      writeFileSync(join(dir, "frontend", "e2e", "smoke.spec.ts"), "test('smoke', () => {})", "utf-8");
+
+      const ev = await collectEvidence(dir);
+      expect(ev.packages.hasPackageJson).toBe(true);
+      expect(ev.packages.hasLockfile).toBe(true);
+      expect(ev.packages.hasArchitectureLints).toBe(true);
+      expect(ev.packages.scripts.hasLocalDevBootPath).toBe(true);
+      expect(ev.packages.scripts.hasLint).toBe(true);
+      expect(ev.packages.scripts.hasTest).toBe(true);
+      expect(ev.tests.hasE2eOrSmokeTests).toBe(true);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("detects deeply nested e2e or smoke test paths", async () => {
+    const dir = makeRepo();
+    try {
+      mkdirSync(join(dir, "apps", "web", "src", "integration", "smoke"), { recursive: true });
+      writeFileSync(
+        join(dir, "apps", "web", "src", "integration", "smoke", "smoke.spec.ts"),
+        "test('smoke', () => {})",
+        "utf-8",
+      );
+
+      const ev = await collectEvidence(dir);
+      expect(ev.tests.hasE2eOrSmokeTests).toBe(true);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("detects Cypress and Webdriver config files as e2e signals", async () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(join(dir, "cypress.config.ts"), "export default {}", "utf-8");
+      writeFileSync(join(dir, "wdio.conf.js"), "exports.config = {}", "utf-8");
+
+      const ev = await collectEvidence(dir);
+      expect(ev.tests.hasE2eOrSmokeTests).toBe(true);
     } finally {
       cleanup(dir);
     }

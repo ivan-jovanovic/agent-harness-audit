@@ -91,17 +91,23 @@ const CHECK_SHORT_LABEL: Record<string, string> = {
   has_readme: "README",
   has_architecture_docs: "architecture docs",
   has_docs_index: "docs index",
+  has_structured_docs: "structured docs",
   has_docs_dir: "docs/",
   has_tsconfig: "tsconfig.json",
   has_env_example: ".env.example",
   has_package_json: "package.json",
   has_lockfile: "lockfile",
+  has_architecture_lints: "arch lint",
+  has_local_dev_boot_path: "local boot",
   has_lint_script: "lint",
   has_typecheck_script: "typecheck",
   has_build_script: "build",
   has_test_script: "test script",
   has_test_dir: "test dir",
   has_test_files: "test files",
+  has_e2e_or_smoke_tests: "e2e or smoke tests",
+  has_ci_pipeline: "CI pipeline",
+  has_ci_validation: "CI validation",
 };
 
 function truncate(s: string, max: number): string {
@@ -341,17 +347,29 @@ const BLOCKER_ACTION_TABLE: Record<string, string> = {
     "Add a discoverable architecture guide at the repo root or in docs/ (for example ARCHITECTURE.md, SYSTEM.md, or docs/repo-structure.md).",
   has_docs_index:
     "Add a docs index such as docs/index.md or docs/README.md so agents have a clear entrypoint into the repository documentation.",
+  has_structured_docs:
+    "Organize docs/ into topical sections or add multiple docs files so the repository documentation is structured and easier to navigate.",
   has_docs_dir: "Create a docs/ directory and start documentation there.",
   has_tsconfig: "Add tsconfig.json to the project root.",
   has_env_example: "Add .env.example listing all required environment variable names.",
   has_package_json: "Run `npm init` to create package.json.",
   has_lockfile: "Run `npm install` to generate a lockfile and commit it.",
+  has_architecture_lints:
+    "Add boundary-enforcement tooling such as dependency-cruiser or eslint-plugin-boundaries so architecture rules are checked mechanically.",
+  has_local_dev_boot_path:
+    "Add a local boot script such as `dev`, `start`, `preview`, or `serve` so the agent can run the app during iterative work.",
   has_lint_script: 'Add a "lint" script to package.json.',
   has_typecheck_script: 'Add "typecheck": "tsc --noEmit" to your package.json scripts.',
   has_build_script: 'Add a "build" script to package.json.',
   has_test_script: 'Add a "test" script to package.json.',
   has_test_dir: "Create a tests/ directory with at least one test file.",
   has_test_files: "Add test files (e.g. src/utils.test.ts) alongside your source.",
+  has_e2e_or_smoke_tests:
+    "Add an e2e or smoke-test signal such as Playwright/Cypress config, an e2e/ or smoke/ directory, or a dedicated smoke-test script.",
+  has_ci_pipeline:
+    "Add a CI pipeline file such as `.github/workflows/*.yml|yaml` or `.gitlab-ci.yml` so changes are validated in automation.",
+  has_ci_validation:
+    "Add validation commands such as lint, typecheck, build, or test to the existing CI pipeline.",
 };
 
 function renderFixPlan(fixPlan: FixItem[], out: (s: string) => void): void {

@@ -2,10 +2,21 @@
 
 /** Thrown for invalid arguments or bad input paths — CLI exits with code 2. */
 export class AuditUsageError extends Error {
-  constructor(message: string) {
+  agent?: AgentName;
+
+  constructor(message: string, agent?: AgentName) {
     super(message);
     this.name = "AuditUsageError";
+    this.agent = agent;
   }
+}
+
+export interface CliErrorEnvelope {
+  error: {
+    code: "usage_error" | "unexpected_error";
+    message: string;
+    agent?: AgentName;
+  };
 }
 
 // Input
@@ -45,13 +56,16 @@ export interface FileSignals {
   hasEnvExample: boolean;
   hasDocsDir: boolean;
   hasDocsIndex: boolean;
+  hasStructuredDocs: boolean;
 }
 
 export interface PackageSignals {
   hasPackageJson: boolean;
   hasLockfile: boolean;
+  hasArchitectureLints: boolean;
   lockfileType?: "npm" | "pnpm" | "yarn";
   scripts: {
+    hasLocalDevBootPath: boolean;
     hasLint: boolean;
     hasTypecheck: boolean;
     hasTest: boolean;
@@ -63,6 +77,7 @@ export interface PackageSignals {
 export interface TestSignals {
   hasTestDir: boolean;
   hasTestFiles: boolean;
+  hasE2eOrSmokeTests: boolean;
   testFramework?: "vitest" | "jest" | "playwright" | "unknown";
   hasVitestConfig: boolean;
   hasJestConfig: boolean;
@@ -70,7 +85,9 @@ export interface TestSignals {
 }
 
 export interface WorkflowSignals {
+  hasCIPipeline: boolean;
   hasCIWorkflows: boolean;
+  hasCIValidation: boolean;
   workflowCount: number;
 }
 

@@ -81,17 +81,23 @@ function buildPrompt(projectPath: string, evidence: RepoEvidence): string {
     "- has_tool_skills: tool-specific skills exist for targeted agent ecosystems.",
     "- has_architecture_docs: architecture/system/repo-structure docs are discoverable.",
     "- has_docs_index: a docs index such as docs/index.md or docs/README.md exists.",
+    "- has_structured_docs: docs/ is organized into topical sections or multiple docs files.",
     "- has_docs_dir: docs directory exists and is usable.",
     "- has_tsconfig: TypeScript config exists when TS context is expected.",
     "- has_env_example: .env.example (or equivalent) exists with required keys.",
     "- has_package_json: package.json exists at audit scope root.",
     "- has_lockfile: dependency lockfile exists.",
+    "- has_architecture_lints: boundary-enforcement tooling such as dependency-cruiser or eslint-plugin-boundaries exists.",
+    "- has_local_dev_boot_path: a local dev/start/preview/serve script or equivalent app boot path exists.",
     "- has_lint_script: lint script exists in package scripts.",
     "- has_typecheck_script: typecheck script exists in package scripts.",
     "- has_build_script: build script exists in package scripts.",
     "- has_test_script: test script exists in package scripts.",
     "- has_test_dir: test directory exists.",
     "- has_test_files: at least one test file exists.",
+    "- has_e2e_or_smoke_tests: e2e or smoke test signals exist, such as Playwright/Cypress config or an e2e/smoke test directory.",
+    "- has_ci_pipeline: a CI pipeline file such as .github/workflows/*.yml|yaml or .gitlab-ci.yml exists.",
+    "- has_ci_validation: a CI pipeline runs validation commands on push or pull request events.",
     "",
     "Respond ONLY with JSON matching the output schema.",
   ].join("\n");
@@ -210,6 +216,7 @@ export class CodexAdapter implements AgentAdapter {
       if (result.exitCode !== 0) {
         throw new AuditUsageError(
           `deep audit failed with Codex (exit ${result.exitCode ?? "unknown"}): ${result.stderr.trim() || "no stderr output"}`,
+          this.name,
         );
       }
 
@@ -226,12 +233,12 @@ export class CodexAdapter implements AgentAdapter {
       }
 
       if (payload === null) {
-        throw new AuditUsageError("deep audit failed: Codex returned no parseable payload");
+        throw new AuditUsageError("deep audit failed: Codex returned no parseable payload", this.name);
       }
 
       const findings = normalizeFindings(payload);
       if (findings.length === 0) {
-        throw new AuditUsageError("deep audit failed: Codex returned no valid findings");
+        throw new AuditUsageError("deep audit failed: Codex returned no valid findings", this.name);
       }
 
       return {

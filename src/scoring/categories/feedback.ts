@@ -6,12 +6,21 @@ export function scoreFeedback(evidence: RepoEvidence, deepOverrides?: DeepCheckO
   const hasTestScript = evidence.packages.scripts.hasTest || deepOverrides?.has_test_script === true;
   const hasTestDir = evidence.tests.hasTestDir || deepOverrides?.has_test_dir === true;
   const hasTestFiles = evidence.tests.hasTestFiles || deepOverrides?.has_test_files === true;
+  const hasE2eOrSmokeTests =
+    evidence.tests.hasE2eOrSmokeTests || deepOverrides?.has_e2e_or_smoke_tests === true;
+  const hasCIPipeline =
+    evidence.workflows.hasCIPipeline || deepOverrides?.has_ci_pipeline === true;
+  const hasCIValidation =
+    evidence.workflows.hasCIValidation || deepOverrides?.has_ci_validation === true;
+  const ciValidationFailureNote = hasCIPipeline
+    ? "CI pipeline exists, but no lint/test/typecheck/build command was detected in it."
+    : "No CI pipeline found — no `.github/workflows/*.yml|yaml` or `.gitlab-ci.yml` file detected.";
 
   const checks: CheckResult[] = [
     {
       id: "has_test_script",
       passed: hasTestScript,
-      weight: 0.25,
+      weight: 0.20,
       label: "test script present",
       failureNote: hasTestScript
         ? undefined
@@ -20,7 +29,7 @@ export function scoreFeedback(evidence: RepoEvidence, deepOverrides?: DeepCheckO
     {
       id: "has_test_dir",
       passed: hasTestDir,
-      weight: 0.30,
+      weight: 0.25,
       label: "test directory exists",
       failureNote: hasTestDir
         ? undefined
@@ -34,6 +43,33 @@ export function scoreFeedback(evidence: RepoEvidence, deepOverrides?: DeepCheckO
       failureNote: hasTestFiles
         ? undefined
         : "No *.test.* or *.spec.* files found at the project root — there are no co-located test files for the agent to reference when adding or modifying features.",
+    },
+    {
+      id: "has_e2e_or_smoke_tests",
+      passed: hasE2eOrSmokeTests,
+      weight: 0.20,
+      label: "e2e or smoke tests present",
+      failureNote: hasE2eOrSmokeTests
+        ? undefined
+        : "No e2e or smoke test signal found — the agent has no obvious end-to-end validation path for behavior checks.",
+    },
+    {
+      id: "has_ci_pipeline",
+      passed: hasCIPipeline,
+      weight: 0.10,
+      label: "CI pipeline present",
+      failureNote: hasCIPipeline
+        ? undefined
+        : "No CI pipeline found — no `.github/workflows/*.yml|yaml` or `.gitlab-ci.yml` file detected.",
+    },
+    {
+      id: "has_ci_validation",
+      passed: hasCIValidation,
+      weight: 0.10,
+      label: "CI validation present",
+      failureNote: hasCIValidation
+        ? undefined
+        : ciValidationFailureNote,
     },
   ];
 

@@ -5,6 +5,10 @@ const CATEGORY_WEIGHT = 0.25;
 export function scoreTooling(evidence: RepoEvidence, deepOverrides?: DeepCheckOverrides): CategoryScore {
   const hasPackageJson = evidence.packages.hasPackageJson || deepOverrides?.has_package_json === true;
   const hasLockfile = evidence.packages.hasLockfile || deepOverrides?.has_lockfile === true;
+  const hasArchitectureLints =
+    evidence.packages.hasArchitectureLints || deepOverrides?.has_architecture_lints === true;
+  const hasLocalDevBootPath =
+    evidence.packages.scripts.hasLocalDevBootPath || deepOverrides?.has_local_dev_boot_path === true;
   const hasLintScript = evidence.packages.scripts.hasLint || deepOverrides?.has_lint_script === true;
   const hasTypecheckScript =
     evidence.packages.scripts.hasTypecheck || deepOverrides?.has_typecheck_script === true;
@@ -14,7 +18,7 @@ export function scoreTooling(evidence: RepoEvidence, deepOverrides?: DeepCheckOv
     {
       id: "has_package_json",
       passed: hasPackageJson,
-      weight: 0.20,
+      weight: 0.10,
       label: "package.json present",
       failureNote: hasPackageJson
         ? undefined
@@ -23,16 +27,34 @@ export function scoreTooling(evidence: RepoEvidence, deepOverrides?: DeepCheckOv
     {
       id: "has_lockfile",
       passed: hasLockfile,
-      weight: 0.20,
+      weight: 0.10,
       label: "Lockfile present",
       failureNote: hasLockfile
         ? undefined
         : "No lockfile found (expected package-lock.json, pnpm-lock.yaml, or yarn.lock) — dependency versions are not pinned and installations may not be reproducible.",
     },
     {
+      id: "has_architecture_lints",
+      passed: hasArchitectureLints,
+      weight: 0.15,
+      label: "architecture lints present",
+      failureNote: hasArchitectureLints
+        ? undefined
+        : "No architecture lint or boundary-enforcement signal found — repo boundaries are not being checked mechanically.",
+    },
+    {
+      id: "has_local_dev_boot_path",
+      passed: hasLocalDevBootPath,
+      weight: 0.20,
+      label: "local dev boot path present",
+      failureNote: hasLocalDevBootPath
+        ? undefined
+        : "No local dev boot path found in package.json — the agent has no standard command to start or preview the app during iterative work.",
+    },
+    {
       id: "has_lint_script",
       passed: hasLintScript,
-      weight: 0.20,
+      weight: 0.15,
       label: "lint script present",
       failureNote: hasLintScript
         ? undefined
@@ -41,7 +63,7 @@ export function scoreTooling(evidence: RepoEvidence, deepOverrides?: DeepCheckOv
     {
       id: "has_typecheck_script",
       passed: hasTypecheckScript,
-      weight: 0.20,
+      weight: 0.15,
       label: "typecheck script present",
       failureNote: hasTypecheckScript
         ? undefined
@@ -50,7 +72,7 @@ export function scoreTooling(evidence: RepoEvidence, deepOverrides?: DeepCheckOv
     {
       id: "has_build_script",
       passed: hasBuildScript,
-      weight: 0.20,
+      weight: 0.15,
       label: "build script present",
       failureNote: hasBuildScript
         ? undefined

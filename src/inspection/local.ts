@@ -8,7 +8,7 @@ import type {
   ContextSignals,
 } from "../types.js";
 import { AuditUsageError } from "../types.js";
-import { parsePackageSignals } from "./package.js";
+import { collectPackageSignals, discoverPackageRoots } from "./package.js";
 
 async function exists(p: string): Promise<boolean> {
   try {
@@ -71,6 +71,226 @@ async function hasDocsIndexFile(root: string): Promise<boolean> {
   }
 }
 
+const E2E_OR_SMOKE_DIR_NAMES = ["e2e", "smoke", "e2e-tests", "smoke-tests"];
+const E2E_OR_SMOKE_FILE_RE = /\.(e2e|smoke)\.[^.]+$/i;
+const E2E_OR_SMOKE_CONFIG_FILES = [
+  "playwright.config.js",
+  "playwright.config.cjs",
+  "playwright.config.mjs",
+  "playwright.config.ts",
+  "cypress.config.js",
+  "cypress.config.cjs",
+  "cypress.config.mjs",
+  "cypress.config.ts",
+  "cypress.json",
+  "wdio.conf.js",
+  "wdio.conf.cjs",
+  "wdio.conf.mjs",
+  "wdio.conf.ts",
+  "webdriverio.conf.js",
+  "webdriverio.conf.cjs",
+  "webdriverio.conf.mjs",
+  "webdriverio.conf.ts",
+  "webdriver.conf.js",
+  "webdriver.conf.cjs",
+  "webdriver.conf.mjs",
+  "webdriver.conf.ts",
+  "nightwatch.conf.js",
+  "nightwatch.conf.cjs",
+  "nightwatch.conf.mjs",
+  "nightwatch.conf.ts",
+];
+const E2E_OR_SMOKE_CONFIG_RE = /^(playwright|cypress|wdio|webdriverio|webdriver|nightwatch)(?:\.[^.]+)*\.(js|cjs|mjs|ts|json)$/i;
+const IGNORED_DIR_NAMES = new Set([
+  ".git",
+  ".idea",
+  ".vscode",
+  "node_modules",
+  "dist",
+  "build",
+  "coverage",
+  ".next",
+  ".turbo",
+  ".cache",
+]);
+
+async function dirHasFiles(root: string): Promise<boolean> {
+  try {
+    const entries = await readdir(root, { withFileTypes: true });
+    return entries.some((entry) => entry.isFile());
+  } catch {
+    return false;
+  }
+}
+
+async function scanForE2eSmokeSignals(root: string, depth = 0, maxDepth = 4): Promise<boolean> {
+  if (depth > maxDepth) return false;
+
+  try {
+    const entries = await readdir(root, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = join(root, entry.name);
+      if (entry.isFile()) {
+        if (E2E_OR_SMOKE_FILE_RE.test(entry.name) || E2E_OR_SMOKE_CONFIG_RE.test(entry.name)) {
+          return true;
+        }
+        continue;
+      }
+
+      if (!entry.isDirectory()) continue;
+      if (IGNORED_DIR_NAMES.has(entry.name)) continue;
+      if (E2E_OR_SMOKE_DIR_NAMES.includes(entry.name)) {
+        if (await dirHasFiles(entryPath)) return true;
+      }
+      if (await scanForE2eSmokeSignals(entryPath, depth + 1, maxDepth)) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+interface DocsTreeScan {
+  markdownCount: number;
+  hasNonEmptySubtree: boolean;
+}
+
+async function scanDocsTree(root: string): Promise<DocsTreeScan> {
+  const entries = await readdir(root, { withFileTypes: true });
+  let markdownCount = 0;
+  let hasNonEmptySubtree = false;
+
+  for (const entry of entries) {
+    if (entry.isFile() && /\.(md|mdx|txt)$/i.test(entry.name)) {
+      markdownCount += 1;
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      const child = await scanDocsTree(join(root, entry.name));
+      markdownCount += child.markdownCount;
+      if (child.markdownCount > 0 || child.hasNonEmptySubtree) {
+        hasNonEmptySubtree = true;
+      }
+    }
+  }
+
+  return { markdownCount, hasNonEmptySubtree };
+}
+
+async function hasStructuredDocsDir(root: string): Promise<boolean> {
+  try {
+    const { markdownCount, hasNonEmptySubtree } = await scanDocsTree(root);
+    return markdownCount >= 2 || (markdownCount >= 1 && hasNonEmptySubtree);
+  } catch {
+    return false;
+  }
+}
+
+async function hasE2eOrSmokeTests(projectPath: string, hasPlaywrightConfig: boolean): Promise<boolean> {
+  if (hasPlaywrightConfig) {
+    return true;
+  }
+
+  try {
+    const rootEntries = await readdir(projectPath, { withFileTypes: true });
+    if (
+      rootEntries.some(
+        (entry) =>
+          entry.isFile() &&
+          (E2E_OR_SMOKE_FILE_RE.test(entry.name) ||
+            E2E_OR_SMOKE_CONFIG_RE.test(entry.name) ||
+            E2E_OR_SMOKE_CONFIG_FILES.includes(entry.name)),
+      )
+    ) {
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+
+  const searchRoots = [projectPath, join(projectPath, "tests"), join(projectPath, "test"), join(projectPath, "__tests__")];
+
+  for (const root of searchRoots) {
+    if (await scanForE2eSmokeSignals(root)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+const CI_VALIDATION_COMMAND_RE =
+  /\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:lint|test|typecheck|build)\b|\b(?:eslint|vitest|jest|playwright|tsc --noEmit|next lint)\b/i;
+
+function hasValidationCommand(raw: string): boolean {
+  return CI_VALIDATION_COMMAND_RE.test(raw);
+}
+
+async function collectGitHubWorkflowSignals(workflowsDir: string): Promise<WorkflowSignals> {
+  try {
+    const entries = await readdir(workflowsDir, { withFileTypes: true });
+    const workflowFiles = entries.filter(
+      (entry) => entry.isFile() && /\.(yml|yaml)$/i.test(entry.name),
+    );
+
+    let hasCIValidation = false;
+    for (const file of workflowFiles) {
+      const raw = await readFile(join(workflowsDir, file.name), "utf-8");
+      if (hasValidationCommand(raw)) {
+        hasCIValidation = true;
+        break;
+      }
+    }
+
+    return {
+      hasCIPipeline: workflowFiles.length > 0,
+      hasCIWorkflows: workflowFiles.length > 0,
+      hasCIValidation,
+      workflowCount: workflowFiles.length,
+    };
+  } catch {
+    return {
+      hasCIPipeline: false,
+      hasCIWorkflows: false,
+      hasCIValidation: false,
+      workflowCount: 0,
+    };
+  }
+}
+
+async function collectGitLabCISignals(projectPath: string): Promise<WorkflowSignals> {
+  const gitlabPath = join(projectPath, ".gitlab-ci.yml");
+  if (!(await exists(gitlabPath))) {
+    return {
+      hasCIPipeline: false,
+      hasCIWorkflows: false,
+      hasCIValidation: false,
+      workflowCount: 0,
+    };
+  }
+
+  try {
+    const raw = await readFile(gitlabPath, "utf-8");
+    return {
+      hasCIPipeline: true,
+      hasCIWorkflows: true,
+      hasCIValidation: hasValidationCommand(raw),
+      workflowCount: 1,
+    };
+  } catch {
+    return {
+      hasCIPipeline: true,
+      hasCIWorkflows: true,
+      hasCIValidation: false,
+      workflowCount: 1,
+    };
+  }
+}
+
 async function collectFileSignals(projectPath: string): Promise<FileSignals> {
   const [
     hasAgentsMd,
@@ -82,6 +302,7 @@ async function collectFileSignals(projectPath: string): Promise<FileSignals> {
     hasEnvExample,
     hasDocsDir,
     hasDocsIndex,
+    hasStructuredDocs,
     hasRootArchitectureDoc,
     hasDocsArchitectureDoc,
   ] = await Promise.all([
@@ -96,6 +317,7 @@ async function collectFileSignals(projectPath: string): Promise<FileSignals> {
     exists(join(projectPath, ".env.example")),
     isDir(join(projectPath, "docs")),
     hasDocsIndexFile(join(projectPath, "docs")),
+    hasStructuredDocsDir(join(projectPath, "docs")),
     hasArchitectureDoc(projectPath),
     hasArchitectureDoc(join(projectPath, "docs")),
   ]);
@@ -113,10 +335,11 @@ async function collectFileSignals(projectPath: string): Promise<FileSignals> {
     hasEnvExample,
     hasDocsDir,
     hasDocsIndex,
+    hasStructuredDocs,
   };
 }
 
-async function collectTestSignals(projectPath: string): Promise<TestSignals> {
+async function collectTestSignalsAtPath(projectPath: string): Promise<TestSignals> {
   const testDirNames = ["tests", "test", "__tests__"];
   const testDirResults = await Promise.all(
     testDirNames.map((d) => isDir(join(projectPath, d)))
@@ -166,20 +389,76 @@ async function collectTestSignals(projectPath: string): Promise<TestSignals> {
   else if (hasJestConfig) testFramework = "jest";
   else if (hasPlaywrightConfig) testFramework = "playwright";
 
-  return { hasTestDir, hasTestFiles, testFramework, hasVitestConfig, hasJestConfig, hasPlaywrightConfig };
+  const hasE2eOrSmoke = await hasE2eOrSmokeTests(projectPath, hasPlaywrightConfig);
+
+  return {
+    hasTestDir,
+    hasTestFiles,
+    hasE2eOrSmokeTests: hasE2eOrSmoke,
+    testFramework,
+    hasVitestConfig,
+    hasJestConfig,
+    hasPlaywrightConfig,
+  };
+}
+
+async function collectTestSignals(projectPath: string, packageRoots: string[]): Promise<TestSignals> {
+  const roots = [projectPath, ...packageRoots.filter((root) => root !== projectPath)];
+
+  const aggregate: TestSignals = {
+    hasTestDir: false,
+    hasTestFiles: false,
+    hasE2eOrSmokeTests: false,
+    testFramework: undefined,
+    hasVitestConfig: false,
+    hasJestConfig: false,
+    hasPlaywrightConfig: false,
+  };
+
+  for (const root of roots) {
+    const signals = await collectTestSignalsAtPath(root);
+    aggregate.hasTestDir = aggregate.hasTestDir || signals.hasTestDir;
+    aggregate.hasTestFiles = aggregate.hasTestFiles || signals.hasTestFiles;
+    aggregate.hasE2eOrSmokeTests = aggregate.hasE2eOrSmokeTests || signals.hasE2eOrSmokeTests;
+    aggregate.hasVitestConfig = aggregate.hasVitestConfig || signals.hasVitestConfig;
+    aggregate.hasJestConfig = aggregate.hasJestConfig || signals.hasJestConfig;
+    aggregate.hasPlaywrightConfig = aggregate.hasPlaywrightConfig || signals.hasPlaywrightConfig;
+    if (!aggregate.testFramework && signals.testFramework) {
+      aggregate.testFramework = signals.testFramework;
+    }
+  }
+
+  return aggregate;
 }
 
 async function collectWorkflowSignals(projectPath: string): Promise<WorkflowSignals> {
   const workflowsDir = join(projectPath, ".github", "workflows");
-  if (!(await isDir(workflowsDir))) {
-    return { hasCIWorkflows: false, workflowCount: 0 };
-  }
   try {
-    const entries = await readdir(workflowsDir);
-    const ymlFiles = entries.filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
-    return { hasCIWorkflows: ymlFiles.length > 0, workflowCount: ymlFiles.length };
+    const [githubSignals, gitlabSignals] = await Promise.all([
+      (await isDir(workflowsDir))
+        ? collectGitHubWorkflowSignals(workflowsDir)
+        : Promise.resolve({
+            hasCIPipeline: false,
+            hasCIWorkflows: false,
+            hasCIValidation: false,
+            workflowCount: 0,
+          }),
+      collectGitLabCISignals(projectPath),
+    ]);
+
+    return {
+      hasCIPipeline: githubSignals.hasCIPipeline || gitlabSignals.hasCIPipeline,
+      hasCIWorkflows: githubSignals.hasCIWorkflows || gitlabSignals.hasCIWorkflows,
+      hasCIValidation: githubSignals.hasCIValidation || gitlabSignals.hasCIValidation,
+      workflowCount: githubSignals.workflowCount + gitlabSignals.workflowCount,
+    };
   } catch {
-    return { hasCIWorkflows: false, workflowCount: 0 };
+    return {
+      hasCIPipeline: false,
+      hasCIWorkflows: false,
+      hasCIValidation: false,
+      workflowCount: 0,
+    };
   }
 }
 
@@ -250,10 +529,11 @@ export async function collectEvidence(projectPath: string): Promise<RepoEvidence
     throw new AuditUsageError(`path is not a directory: ${projectPath}`);
   }
 
+  const packageRoots = await discoverPackageRoots(projectPath);
   const [files, packages, tests, workflows, context] = await Promise.all([
     collectFileSignals(projectPath),
-    parsePackageSignals(projectPath),
-    collectTestSignals(projectPath),
+    collectPackageSignals(projectPath),
+    collectTestSignals(projectPath, packageRoots),
     collectWorkflowSignals(projectPath),
     collectContextSignals(projectPath),
   ]);

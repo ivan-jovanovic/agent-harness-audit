@@ -112,6 +112,45 @@ describe("CLI integration", () => {
     expect(stderr).toContain("--tools must be one of");
   });
 
+  it("invalid --tools in --json emits a machine-readable error envelope", () => {
+    const { stdout, stderr, status } = run(["audit", ".", "--json", "--tools", "not-a-tool"]);
+    expect(status).toBe(2);
+    expect(stderr).toBe("");
+    const envelope = JSON.parse(stdout) as {
+      error: { code: string; message: string; agent?: string };
+    };
+    expect(envelope.error.code).toBe("usage_error");
+    expect(envelope.error.message).toContain("--tools must be one of");
+    expect(envelope.error.agent).toBeUndefined();
+  });
+
+  it("unexpected errors in --json emit a machine-readable error envelope", () => {
+    const tmpDir = mkdtempSync(resolve(tmpdir(), "harness-unexpected-json-"));
+    const outputDir = resolve(tmpDir, "claude-codex-trap");
+    mkdirSync(outputDir, { recursive: true });
+    chmodSync(outputDir, 0o555);
+    try {
+      const { stdout, stderr, status } = run([
+        "audit",
+        resolve(FIXTURES, "minimal"),
+        "--json",
+        "--output",
+        resolve(outputDir, "report.json"),
+      ]);
+      expect(status).toBe(3);
+      expect(stderr).toBe("");
+      const envelope = JSON.parse(stdout) as {
+        error: { code: string; message: string; agent?: string };
+      };
+      expect(envelope.error.code).toBe("unexpected_error");
+      expect(envelope.error.message).toMatch(/(permission denied|EACCES|EPERM)/i);
+      expect(envelope.error.agent).toBeUndefined();
+    } finally {
+      chmodSync(outputDir, 0o755);
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("--tool alias still works and warns", () => {
     const { stderr, status } = run(["audit", resolve(FIXTURES, "minimal"), "--tool", "claude-code", "--json"]);
     expect(status).toBe(0);
@@ -321,6 +360,54 @@ describe("CLI integration", () => {
       expect(status).toBe(2);
       expect(stderr).toContain("requested agent is not available: codex");
     } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("--deep --agent in --json emits agent on the error envelope", () => {
+    const tmpDir = mkdtempSync(resolve(tmpdir(), "harness-agent-unavailable-json-"));
+    const binDir = createFakeClaudeBin(tmpDir);
+    try {
+      const { stdout, stderr, status } = run(
+        ["audit", resolve(FIXTURES, "minimal"), "--json", "--deep", "--agent", "codex"],
+        { PATH: binDir }
+      );
+      expect(status).toBe(2);
+      expect(stderr).toBe("");
+      const envelope = JSON.parse(stdout) as {
+        error: { code: string; message: string; agent?: string };
+      };
+      expect(envelope.error.code).toBe("usage_error");
+      expect(envelope.error.message).toContain("requested agent is not available: codex");
+      expect(envelope.error.agent).toBe("codex");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("unexpected error messages containing claude/codex do not misattribute agent", () => {
+    const tmpDir = mkdtempSync(resolve(tmpdir(), "harness-agent-trap-"));
+    const outputDir = resolve(tmpDir, "claude-codex-json-trap");
+    mkdirSync(outputDir, { recursive: true });
+    chmodSync(outputDir, 0o555);
+    try {
+      const { stdout, stderr, status } = run([
+        "audit",
+        resolve(FIXTURES, "minimal"),
+        "--json",
+        "--output",
+        resolve(outputDir, "report.json"),
+      ]);
+      expect(status).toBe(3);
+      expect(stderr).toBe("");
+      const envelope = JSON.parse(stdout) as {
+        error: { code: string; message: string; agent?: string };
+      };
+      expect(envelope.error.code).toBe("unexpected_error");
+      expect(envelope.error.message).toMatch(/claude-codex-json-trap/);
+      expect(envelope.error.agent).toBeUndefined();
+    } finally {
+      chmodSync(outputDir, 0o755);
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });

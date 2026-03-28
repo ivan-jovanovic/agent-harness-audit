@@ -15,11 +15,14 @@ function makeEvidence(): RepoEvidence {
       hasEnvExample: false,
       hasDocsDir: false,
       hasDocsIndex: false,
+      hasStructuredDocs: false,
     },
     packages: {
       hasPackageJson: false,
       hasLockfile: false,
+      hasArchitectureLints: false,
       scripts: {
+        hasLocalDevBootPath: false,
         hasLint: false,
         hasTypecheck: false,
         hasTest: false,
@@ -30,12 +33,15 @@ function makeEvidence(): RepoEvidence {
     tests: {
       hasTestDir: false,
       hasTestFiles: false,
+      hasE2eOrSmokeTests: false,
       hasVitestConfig: false,
       hasJestConfig: false,
       hasPlaywrightConfig: false,
     },
     workflows: {
+      hasCIPipeline: false,
       hasCIWorkflows: false,
+      hasCIValidation: false,
       workflowCount: 0,
     },
     context: {
@@ -64,5 +70,41 @@ describe("mergeDeepFindings", () => {
     expect(merged.evidence.files.hasClaudeSkills).toBe(false);
     expect(merged.evidence.files.hasCursorSkills).toBe(false);
     expect(merged.overrides.has_tool_skills).toBe(true);
+  });
+
+  it("upgrades CI pipeline evidence when validation passes", () => {
+    const evidence = makeEvidence();
+    const findings: DeepAuditFinding[] = [
+      {
+        categoryId: "feedback",
+        checkId: "has_ci_validation",
+        passed: true,
+        label: "CI validation present",
+        evidence: "GitLab CI runs npm test",
+      },
+    ];
+
+    const merged = mergeDeepFindings(evidence, findings);
+    expect(merged.evidence.workflows.hasCIPipeline).toBe(true);
+    expect(merged.evidence.workflows.hasCIWorkflows).toBe(true);
+    expect(merged.evidence.workflows.hasCIValidation).toBe(true);
+  });
+
+  it("upgrades only CI pipeline evidence when pipeline is found", () => {
+    const evidence = makeEvidence();
+    const findings: DeepAuditFinding[] = [
+      {
+        categoryId: "feedback",
+        checkId: "has_ci_pipeline",
+        passed: true,
+        label: "CI pipeline present",
+        evidence: "Found .github/workflows/ci.yml",
+      },
+    ];
+
+    const merged = mergeDeepFindings(evidence, findings);
+    expect(merged.evidence.workflows.hasCIPipeline).toBe(true);
+    expect(merged.evidence.workflows.hasCIWorkflows).toBe(true);
+    expect(merged.evidence.workflows.hasCIValidation).toBe(false);
   });
 });

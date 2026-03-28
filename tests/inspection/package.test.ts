@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { join } from "path";
 import { fileURLToPath } from "url";
-import { parsePackageSignals } from "../../src/inspection/package.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { collectPackageSignals, parsePackageSignals } from "../../src/inspection/package.js";
 
 const fixturesDir = join(fileURLToPath(import.meta.url), "../../../fixtures");
 
@@ -20,6 +22,8 @@ describe("parsePackageSignals", () => {
 
     it("no scripts", async () => {
       const result = await parsePackageSignals(join(fixturesDir, "minimal"));
+      expect(result.hasArchitectureLints).toBe(false);
+      expect(result.scripts.hasLocalDevBootPath).toBe(false);
       expect(result.scripts.hasLint).toBe(false);
       expect(result.scripts.hasTypecheck).toBe(false);
       expect(result.scripts.hasTest).toBe(false);
@@ -36,6 +40,8 @@ describe("parsePackageSignals", () => {
 
     it("has test script only", async () => {
       const result = await parsePackageSignals(join(fixturesDir, "partial"));
+      expect(result.hasArchitectureLints).toBe(false);
+      expect(result.scripts.hasLocalDevBootPath).toBe(false);
       expect(result.scripts.hasTest).toBe(true);
       expect(result.scripts.hasLint).toBe(false);
       expect(result.scripts.hasTypecheck).toBe(false);
@@ -46,6 +52,8 @@ describe("parsePackageSignals", () => {
   describe("strong fixture", () => {
     it("has all scripts", async () => {
       const result = await parsePackageSignals(join(fixturesDir, "strong"));
+      expect(result.hasArchitectureLints).toBe(true);
+      expect(result.scripts.hasLocalDevBootPath).toBe(true);
       expect(result.scripts.hasLint).toBe(true);
       expect(result.scripts.hasTypecheck).toBe(true);
       expect(result.scripts.hasTest).toBe(true);
@@ -62,6 +70,8 @@ describe("parsePackageSignals", () => {
   describe("ts-webapp fixture", () => {
     it("has all scripts", async () => {
       const result = await parsePackageSignals(join(fixturesDir, "ts-webapp"));
+      expect(result.hasArchitectureLints).toBe(true);
+      expect(result.scripts.hasLocalDevBootPath).toBe(true);
       expect(result.scripts.hasLint).toBe(true);
       expect(result.scripts.hasTypecheck).toBe(true);
       expect(result.scripts.hasTest).toBe(true);
@@ -80,7 +90,106 @@ describe("parsePackageSignals", () => {
       const result = await parsePackageSignals("/nonexistent/path/nowhere");
       expect(result.hasPackageJson).toBe(false);
       expect(result.hasLockfile).toBe(false);
+      expect(result.hasArchitectureLints).toBe(false);
+      expect(result.scripts.hasLocalDevBootPath).toBe(false);
       expect(result.scripts.hasTest).toBe(false);
+    });
+  });
+
+  describe("architecture lint detection", () => {
+    it("detects dependency-cruiser config files", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "harness-archlint-"));
+      try {
+        writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "arch-lints" }, null, 2), "utf-8");
+        writeFileSync(join(dir, ".dependency-cruiser.js"), "module.exports = {};", "utf-8");
+
+        const result = await parsePackageSignals(dir);
+        expect(result.hasArchitectureLints).toBe(true);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("monorepo package aggregation", () => {
+    it("aggregates signals from discovered package roots", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "harness-mono-"));
+      try {
+        mkdirSync(join(dir, "backend"), { recursive: true });
+        mkdirSync(join(dir, "frontend", "e2e"), { recursive: true });
+
+        writeFileSync(
+          join(dir, "backend", "package.json"),
+          JSON.stringify(
+            {
+              name: "backend",
+              scripts: {
+                dev: "vite",
+                lint: "eslint src --ext .ts",
+              },
+              devDependencies: {
+                "dependency-cruiser": "^15.0.0",
+              },
+            },
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+        writeFileSync(join(dir, "backend", "package-lock.json"), "{}", "utf-8");
+        writeFileSync(
+          join(dir, "frontend", "package.json"),
+          JSON.stringify(
+            {
+              name: "frontend",
+              scripts: {
+                test: "vitest run",
+              },
+            },
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+
+        const result = await collectPackageSignals(dir);
+        expect(result.hasPackageJson).toBe(true);
+        expect(result.hasLockfile).toBe(true);
+        expect(result.hasArchitectureLints).toBe(true);
+        expect(result.scripts.hasLocalDevBootPath).toBe(true);
+        expect(result.scripts.hasLint).toBe(true);
+        expect(result.scripts.hasTest).toBe(true);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("local dev boot path detection", () => {
+    it("does not treat vite build as a local dev boot path", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "harness-package-test-"));
+      try {
+        writeFileSync(
+          join(dir, "package.json"),
+          JSON.stringify(
+            {
+              name: "vite-build-only",
+              scripts: {
+                build: "vite build",
+              },
+            },
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+
+        const result = await parsePackageSignals(dir);
+        expect(result.scripts.hasLocalDevBootPath).toBe(false);
+        expect(result.scripts.hasBuild).toBe(true);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 });

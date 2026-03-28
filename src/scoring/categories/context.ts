@@ -6,6 +6,8 @@ export function scoreContext(evidence: RepoEvidence, deepOverrides?: DeepCheckOv
   const hasArchitectureDocs =
     evidence.files.hasArchitectureDocs || deepOverrides?.has_architecture_docs === true;
   const hasDocsIndex = evidence.files.hasDocsIndex || deepOverrides?.has_docs_index === true;
+  const hasStructuredDocs =
+    evidence.files.hasStructuredDocs || deepOverrides?.has_structured_docs === true;
   const hasDocsDir = evidence.files.hasDocsDir || deepOverrides?.has_docs_dir === true;
   const hasTsconfig = evidence.context.hasTsConfig || deepOverrides?.has_tsconfig === true;
   const hasEnvExample = evidence.files.hasEnvExample || deepOverrides?.has_env_example === true;
@@ -23,16 +25,25 @@ export function scoreContext(evidence: RepoEvidence, deepOverrides?: DeepCheckOv
     {
       id: "has_docs_index",
       passed: hasDocsIndex,
-      weight: 0.20,
+      weight: 0.15,
       label: "docs index exists",
       failureNote: hasDocsIndex
         ? undefined
         : "No docs index found under docs/ — agents have no clear entrypoint into the repository's documentation set.",
     },
     {
+      id: "has_structured_docs",
+      passed: hasStructuredDocs,
+      weight: 0.20,
+      label: "structured docs exist",
+      failureNote: hasStructuredDocs
+        ? undefined
+        : "No structured docs tree found under docs/ — the repository documentation looks flat instead of organized into topical sections.",
+    },
+    {
       id: "has_docs_dir",
       passed: hasDocsDir,
-      weight: 0.20,
+      weight: 0.10,
       label: "docs/ directory exists",
       failureNote: hasDocsDir
         ? undefined

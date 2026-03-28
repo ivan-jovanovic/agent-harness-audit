@@ -23,11 +23,14 @@ const EVIDENCE: RepoEvidence = {
     hasEnvExample: false,
     hasDocsDir: false,
     hasDocsIndex: false,
+    hasStructuredDocs: false,
   },
   packages: {
     hasPackageJson: false,
     hasLockfile: false,
+    hasArchitectureLints: false,
     scripts: {
+      hasLocalDevBootPath: false,
       hasLint: false,
       hasTypecheck: false,
       hasTest: false,
@@ -38,12 +41,15 @@ const EVIDENCE: RepoEvidence = {
   tests: {
     hasTestDir: false,
     hasTestFiles: false,
+    hasE2eOrSmokeTests: false,
     hasVitestConfig: false,
     hasJestConfig: false,
     hasPlaywrightConfig: false,
   },
   workflows: {
+    hasCIPipeline: false,
     hasCIWorkflows: false,
+    hasCIValidation: false,
     workflowCount: 0,
   },
   context: {

@@ -2,7 +2,14 @@
 
 import { resolve } from "node:path";
 import minimist from "minimist";
-import type { AuditInput, TargetTool, SafetyLevel, AgentName, ToolsRequested } from "./types.js";
+import type {
+  AuditInput,
+  TargetTool,
+  SafetyLevel,
+  AgentName,
+  ToolsRequested,
+  CliErrorEnvelope,
+} from "./types.js";
 import { AuditUsageError } from "./types.js";
 import { runAuditCommand } from "./commands/audit.js";
 
@@ -43,21 +50,48 @@ const VALID_TOOLS: TargetTool[] = ["claude-code", "codex", "cursor", "copilot", 
 const VALID_AGENTS: AgentName[] = ["claude-code", "codex"];
 const VALID_SAFETY_LEVELS: SafetyLevel[] = ["low", "medium", "high"];
 
-function parseTools(rawTools: string | undefined, rawTool: string | undefined): {
+async function emitError(
+  message: string,
+  exitCode: number,
+  jsonMode: boolean,
+  agent?: AgentName,
+  code: CliErrorEnvelope["error"]["code"] = "usage_error",
+): Promise<never> {
+  if (jsonMode) {
+    const envelope: CliErrorEnvelope = {
+      error: {
+        code,
+        message,
+        ...(agent ? { agent } : {}),
+      },
+    };
+    return await new Promise<never>((resolve) => {
+      process.stdout.write(`${JSON.stringify(envelope, null, 2)}\n`, () => {
+        process.exit(exitCode);
+        resolve(undefined as never);
+      });
+    });
+  }
+
+  process.stderr.write(`Error: ${message}\n`);
+  process.exit(exitCode);
+}
+
+async function parseTools(
+  rawTools: string | undefined,
+  rawTool: string | undefined,
+  jsonMode: boolean,
+): Promise<{
   toolsRequested: ToolsRequested;
   toolsResolved: TargetTool[];
-} {
+}> {
   if (rawTools && rawTool) {
-    process.stderr.write("Error: use either --tools or --tool, not both\n");
-    process.exit(2);
+    await emitError("use either --tools or --tool, not both", 2, jsonMode);
   }
 
   if (rawTool) {
     if (!VALID_TOOLS.includes(rawTool as TargetTool)) {
-      process.stderr.write(
-        `Error: --tool must be one of: ${VALID_TOOLS.join(", ")}. Got: ${rawTool}\n`,
-      );
-      process.exit(2);
+      await emitError(`--tool must be one of: ${VALID_TOOLS.join(", ")}. Got: ${rawTool}`, 2, jsonMode);
     }
     process.stderr.write("Warning: --tool is deprecated; use --tools instead\n");
     return {
@@ -79,21 +113,20 @@ function parseTools(rawTools: string | undefined, rawTool: string | undefined): 
     .filter((tool) => tool.length > 0);
 
   if (requested.length === 0) {
-    process.stderr.write("Error: --tools must not be empty\n");
-    process.exit(2);
+    await emitError("--tools must not be empty", 2, jsonMode);
   }
 
   if (requested.includes("all")) {
-    process.stderr.write("Error: --tools cannot combine 'all' with specific tools\n");
-    process.exit(2);
+    await emitError("--tools cannot combine 'all' with specific tools", 2, jsonMode);
   }
 
   const invalid = requested.filter((tool) => !VALID_TOOLS.includes(tool as TargetTool));
   if (invalid.length > 0) {
-    process.stderr.write(
-      `Error: --tools must be one of: ${VALID_TOOLS.join(", ")}, all. Got: ${invalid.join(", ")}\n`,
+    await emitError(
+      `--tools must be one of: ${VALID_TOOLS.join(", ")}, all. Got: ${invalid.join(", ")}`,
+      2,
+      jsonMode,
     );
-    process.exit(2);
   }
 
   const unique = [...new Set(requested)] as TargetTool[];
@@ -103,7 +136,7 @@ function parseTools(rawTools: string | undefined, rawTool: string | undefined): 
   };
 }
 
-export function parseArgs(argv: string[]): { command: string; input: AuditInput } {
+export async function parseArgs(argv: string[]): Promise<{ command: string; input: AuditInput }> {
   const args = minimist(argv.slice(2), {
     boolean: [
       "help",
@@ -146,34 +179,35 @@ export function parseArgs(argv: string[]): { command: string; input: AuditInput 
   const [command, pathArg] = args._ as string[];
 
   if (!command) {
-    process.stderr.write("Error: no command specified. Run agent-harness --help for usage.\n");
-    process.exit(2);
+    await emitError("no command specified. Run agent-harness --help for usage.", 2, Boolean(args.json));
   }
 
-  const { toolsRequested, toolsResolved } = parseTools(
+  const { toolsRequested, toolsResolved } = await parseTools(
     args["tools"] as string | undefined,
     args["tool"] as string | undefined,
+    Boolean(args.json),
   );
 
   const agentName = args["agent"] as string | undefined;
   if (agentName && !VALID_AGENTS.includes(agentName as AgentName)) {
-    process.stderr.write(
-      `Error: --agent must be one of: ${VALID_AGENTS.join(", ")}. Got: ${agentName}\n`,
+    await emitError(
+      `--agent must be one of: ${VALID_AGENTS.join(", ")}. Got: ${agentName}`,
+      2,
+      Boolean(args.json),
     );
-    process.exit(2);
   }
 
   const safetyLevel = args["safety-level"] as string;
   if (!VALID_SAFETY_LEVELS.includes(safetyLevel as SafetyLevel)) {
-    process.stderr.write(
-      `Error: --safety-level must be one of: ${VALID_SAFETY_LEVELS.join(", ")}. Got: ${safetyLevel}\n`,
+    await emitError(
+      `--safety-level must be one of: ${VALID_SAFETY_LEVELS.join(", ")}. Got: ${safetyLevel}`,
+      2,
+      Boolean(args.json),
     );
-    process.exit(2);
   }
 
   if (args["output"] && !args["json"]) {
-    process.stderr.write("Error: --output requires --json\n");
-    process.exit(2);
+    await emitError("--output requires --json", 2, Boolean(args.json));
   }
 
   const targetPath = pathArg ? resolve(pathArg) : resolve(".");
@@ -199,15 +233,24 @@ export function parseArgs(argv: string[]): { command: string; input: AuditInput 
 }
 
 async function main(): Promise<void> {
-  const { command, input } = parseArgs(process.argv);
+  const { command, input } = await parseArgs(process.argv);
 
-  if (command === "audit") {
-    await runAuditCommand(input);
-    return;
+  try {
+    if (command === "audit") {
+      await runAuditCommand(input);
+      return;
+    }
+
+    await emitError(`unknown command "${command}". Run agent-harness --help for usage.`, 2, input.jsonMode);
+  } catch (err: unknown) {
+    if (input.jsonMode) {
+      const message = err instanceof Error ? err.message : String(err);
+      const agent = err instanceof AuditUsageError ? err.agent ?? input.agentName : input.agentName;
+      const code = err instanceof AuditUsageError ? "usage_error" : "unexpected_error";
+      await emitError(message, err instanceof AuditUsageError ? 2 : 3, true, agent, code);
+    }
+    throw err;
   }
-
-  process.stderr.write(`Error: unknown command "${command}". Run agent-harness --help for usage.\n`);
-  process.exit(2);
 }
 
 main().catch((err: unknown) => {

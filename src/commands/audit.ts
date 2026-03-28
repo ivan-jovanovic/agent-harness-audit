@@ -84,6 +84,9 @@ export function mergeDeepFindings(
       case "has_docs_index":
         merged.files.hasDocsIndex = true;
         break;
+      case "has_structured_docs":
+        merged.files.hasStructuredDocs = true;
+        break;
       case "has_docs_dir":
         merged.files.hasDocsDir = true;
         break;
@@ -98,6 +101,21 @@ export function mergeDeepFindings(
         break;
       case "has_lockfile":
         merged.packages.hasLockfile = true;
+        break;
+      case "has_architecture_lints":
+        merged.packages.hasArchitectureLints = true;
+        break;
+      case "has_local_dev_boot_path":
+        merged.packages.scripts.hasLocalDevBootPath = true;
+        break;
+      case "has_ci_validation":
+        merged.workflows.hasCIPipeline = true;
+        merged.workflows.hasCIWorkflows = true;
+        merged.workflows.hasCIValidation = true;
+        break;
+      case "has_ci_pipeline":
+        merged.workflows.hasCIPipeline = true;
+        merged.workflows.hasCIWorkflows = true;
         break;
       case "has_lint_script":
         merged.packages.scripts.hasLint = true;
@@ -116,6 +134,9 @@ export function mergeDeepFindings(
         break;
       case "has_test_files":
         merged.tests.hasTestFiles = true;
+        break;
+      case "has_e2e_or_smoke_tests":
+        merged.tests.hasE2eOrSmokeTests = true;
         break;
       default:
         break;
@@ -164,7 +185,7 @@ export async function runAudit(input: AuditInput): Promise<AuditReport> {
     const selected = selectAgent(discovery, input.agentName);
     if (!selected) {
       if (input.agentName) {
-        throw new AuditUsageError(`requested agent is not available: ${input.agentName}`);
+        throw new AuditUsageError(`requested agent is not available: ${input.agentName}`, input.agentName);
       }
       throw new AuditUsageError("no supported agent found for --deep (expected claude or codex in PATH)");
     }
