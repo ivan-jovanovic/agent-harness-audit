@@ -6,6 +6,11 @@ import type {
   Blocker,
   FixItem,
   CategoryId,
+  ToolReadiness,
+  ToolSpecificFixItem,
+  TargetTool,
+  CheckResult,
+  DeepCheckOverrides,
 } from "../types.js";
 import { scoreInstructions, INSTRUCTIONS_WEIGHT } from "./categories/instructions.js";
 import { scoreContext, CONTEXT_WEIGHT } from "./categories/context.js";
@@ -22,11 +27,13 @@ const CATEGORY_WEIGHTS: Record<CategoryId, number> = {
 };
 
 const EFFORT_TABLE: Record<string, "quick" | "medium" | "heavy"> = {
-  has_agents_md: "quick",
+  has_primary_instructions: "quick",
+  has_generic_skills: "medium",
+  has_tool_skills: "medium",
   has_claude_md: "quick",
   has_readme: "medium",
-  has_contributing: "medium",
   has_architecture_docs: "heavy",
+  has_docs_index: "medium",
   has_docs_dir: "medium",
   has_tsconfig: "quick",
   has_env_example: "quick",
@@ -38,20 +45,21 @@ const EFFORT_TABLE: Record<string, "quick" | "medium" | "heavy"> = {
   has_test_script: "medium",
   has_test_dir: "medium",
   has_test_files: "medium",
-  has_ci_workflows: "medium",
 };
 
 const ACTION_TABLE: Record<string, string> = {
-  has_agents_md:
-    "Create AGENTS.md at your project root with operating rules, common tasks, and validation commands.",
-  has_claude_md:
-    "Create CLAUDE.md at your project root. Claude Code reads this file automatically at the start of every session.",
+  has_primary_instructions:
+    "Add a primary instruction surface: prefer AGENTS.md, or use CLAUDE.md if this repo is intentionally Claude-only.",
+  has_generic_skills:
+    "Add at least one reusable generic project skill under .agents/skills/.../SKILL.md.",
+  has_tool_skills:
+    "Add tool-specific skills for every selected supported tool under .claude/skills/.../SKILL.md and/or .cursor/skills/.../SKILL.md.",
   has_readme:
     "Add README.md to the project root with a description, setup steps, and basic usage.",
-  has_contributing:
-    "Add CONTRIBUTING.md describing your branch strategy, commit format, and how changes get reviewed.",
   has_architecture_docs:
-    "Add ARCHITECTURE.md or docs/architecture.md describing key directories, data flow, and major design decisions.",
+    "Add a discoverable architecture guide at the repo root or in docs/ (for example ARCHITECTURE.md, SYSTEM.md, or docs/repo-structure.md) describing key directories, data flow, and major design decisions.",
+  has_docs_index:
+    "Add a docs index such as docs/index.md or docs/README.md so agents have a clear entrypoint into the repository documentation.",
   has_docs_dir:
     "Create a docs/ directory and move or start any project documentation there.",
   has_tsconfig:
@@ -74,16 +82,15 @@ const ACTION_TABLE: Record<string, string> = {
     "Create a tests/ directory and add at least one test file. Even a single passing test gives the agent a feedback loop.",
   has_test_files:
     "Add test files alongside your source files (e.g., `src/utils.test.ts`) or inside a dedicated test directory.",
-  has_ci_workflows:
-    "Add a GitHub Actions workflow file at .github/workflows/ci.yml that runs lint, typecheck, and tests on push.",
 };
 
 const BLOCKER_TITLE_TABLE: Record<string, string> = {
-  has_agents_md: "No agent operating rules",
-  has_claude_md: "No Claude Code project config",
+  has_primary_instructions: "No primary instruction surface",
+  has_generic_skills: "No generic project skills",
+  has_tool_skills: "Missing selected tool skills",
   has_readme: "No project README",
-  has_contributing: "No contribution guidelines",
   has_architecture_docs: "No architecture documentation",
+  has_docs_index: "No docs index",
   has_docs_dir: "No docs directory",
   has_tsconfig: "No TypeScript config",
   has_env_example: "No environment variable documentation",
@@ -95,20 +102,84 @@ const BLOCKER_TITLE_TABLE: Record<string, string> = {
   has_test_script: "No test script",
   has_test_dir: "No test directory",
   has_test_files: "No test files",
-  has_ci_workflows: "No CI workflows",
 };
+
+const TOOL_SPECIFIC_NOTE = "No tool-specific repo-level checks in v2";
+
+function scoreClaudeReadiness(evidence: RepoEvidence): ToolReadiness {
+  const checks: CheckResult[] = [
+    {
+      id: "has_claude_md",
+      passed: evidence.files.hasCLAUDEMd,
+      weight: 1.0,
+      label: "CLAUDE.md present",
+      failureNote: evidence.files.hasCLAUDEMd
+        ? undefined
+        : "No CLAUDE.md found — Claude Code will not load any project-level configuration at startup.",
+    },
+  ];
+
+  return {
+    tool: "claude-code",
+    status: checks.every((check) => check.passed) ? "ready" : "needs-work",
+    score: checks.every((check) => check.passed) ? 5 : 0,
+    maxScore: 5,
+    checks,
+  };
+}
+
+function scoreToolReadiness(evidence: RepoEvidence, toolsResolved: TargetTool[]): ToolReadiness[] {
+  return toolsResolved.map((tool) => {
+    if (tool === "claude-code") {
+      return scoreClaudeReadiness(evidence);
+    }
+
+    return {
+      tool,
+      status: "not-scored",
+      note: TOOL_SPECIFIC_NOTE,
+    };
+  });
+}
+
+function buildToolSpecificFixes(toolReadiness: ToolReadiness[]): ToolSpecificFixItem[] {
+  const failingEntries = toolReadiness.flatMap((readiness) => {
+    if (!readiness.checks) return [];
+
+    return readiness.checks
+      .filter((check) => !check.passed)
+      .map((check) => ({
+        tool: readiness.tool,
+        checkId: check.id,
+      }));
+  });
+
+  return failingEntries.map((entry, index) => ({
+    tool: entry.tool,
+    checkId: entry.checkId,
+    action:
+      entry.checkId === "has_claude_md"
+        ? "Create CLAUDE.md at your project root. Claude Code reads this file automatically at the start of every session."
+        : `Fix ${entry.checkId}`,
+    effort: EFFORT_TABLE[entry.checkId] ?? "medium",
+    priority: index + 1,
+  }));
+}
 
 export function scoreProject(
   evidence: RepoEvidence,
-  input: Pick<AuditInput, "tool">
+  input: Pick<AuditInput, "toolsRequested" | "toolsResolved">,
+  deepOverrides: DeepCheckOverrides = {},
 ): ScoringResult {
   const categoryScores: CategoryScore[] = [
-    scoreInstructions(evidence, input),
-    scoreContext(evidence),
-    scoreTooling(evidence),
-    scoreFeedback(evidence),
-    scoreSafety(evidence),
+    scoreInstructions(evidence, { ...input, deepOverrides }),
+    scoreContext(evidence, deepOverrides),
+    scoreTooling(evidence, deepOverrides),
+    scoreFeedback(evidence, deepOverrides),
+    scoreSafety(evidence, deepOverrides),
   ];
+  const toolReadiness = scoreToolReadiness(evidence, input.toolsResolved);
+  const toolSpecificFixes = buildToolSpecificFixes(toolReadiness);
 
   // Overall score: sum(categoryScore / 5 * categoryWeight) * 100, integer
   const rawOverall = categoryScores.reduce((sum, cat) => {
@@ -174,5 +245,7 @@ export function scoreProject(
     categoryScores,
     topBlockers,
     fixPlan,
+    toolReadiness,
+    toolSpecificFixes,
   };
 }

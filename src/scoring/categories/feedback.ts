@@ -1,44 +1,39 @@
-import type { RepoEvidence, CategoryScore, CheckResult } from "../../types.js";
+import type { RepoEvidence, CategoryScore, CheckResult, DeepCheckOverrides } from "../../types.js";
 
 const CATEGORY_WEIGHT = 0.25;
 
-export function scoreFeedback(evidence: RepoEvidence): CategoryScore {
+export function scoreFeedback(evidence: RepoEvidence, deepOverrides?: DeepCheckOverrides): CategoryScore {
+  const hasTestScript = evidence.packages.scripts.hasTest || deepOverrides?.has_test_script === true;
+  const hasTestDir = evidence.tests.hasTestDir || deepOverrides?.has_test_dir === true;
+  const hasTestFiles = evidence.tests.hasTestFiles || deepOverrides?.has_test_files === true;
+
   const checks: CheckResult[] = [
     {
       id: "has_test_script",
-      passed: evidence.packages.scripts.hasTest,
+      passed: hasTestScript,
       weight: 0.25,
       label: "test script present",
-      failureNote: evidence.packages.scripts.hasTest
+      failureNote: hasTestScript
         ? undefined
         : "No `test` script found in package.json — the agent has no standard command to run the test suite after making changes.",
     },
     {
       id: "has_test_dir",
-      passed: evidence.tests.hasTestDir,
+      passed: hasTestDir,
       weight: 0.30,
       label: "test directory exists",
-      failureNote: evidence.tests.hasTestDir
+      failureNote: hasTestDir
         ? undefined
         : "No tests/, test/, or __tests__/ directory found — there is no test suite for the agent to run or extend when making changes.",
     },
     {
       id: "has_test_files",
-      passed: evidence.tests.hasTestFiles,
+      passed: hasTestFiles,
       weight: 0.15,
       label: "test files present",
-      failureNote: evidence.tests.hasTestFiles
+      failureNote: hasTestFiles
         ? undefined
         : "No *.test.* or *.spec.* files found at the project root — there are no co-located test files for the agent to reference when adding or modifying features.",
-    },
-    {
-      id: "has_ci_workflows",
-      passed: evidence.workflows.hasCIWorkflows,
-      weight: 0.30,
-      label: "CI workflows present",
-      failureNote: evidence.workflows.hasCIWorkflows
-        ? undefined
-        : "No .github/workflows/*.yml files found — there is no automated validation step that runs on every push or pull request.",
     },
   ];
 

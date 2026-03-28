@@ -2,20 +2,55 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { spawnSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, rmSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  rmSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  chmodSync,
+  mkdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(__dirname, "../dist/cli.js");
 const FIXTURES = resolve(__dirname, "../fixtures");
 
-function run(args: string[]): { stdout: string; stderr: string; status: number } {
-  const result = spawnSync(process.execPath, [CLI, ...args], { encoding: "utf-8" });
+function run(
+  args: string[],
+  envOverrides?: Record<string, string>
+): { stdout: string; stderr: string; status: number } {
+  const result = spawnSync(process.execPath, [CLI, ...args], {
+    encoding: "utf-8",
+    env: { ...process.env, ...(envOverrides ?? {}) },
+  });
   return {
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
     status: result.status ?? 1,
   };
+}
+
+function createFakeClaudeBin(rootDir: string): string {
+  const binDir = resolve(rootDir, "bin");
+  const claudePath = resolve(binDir, "claude");
+  rmSync(binDir, { recursive: true, force: true });
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(
+    claudePath,
+    `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "claude 0.0.0"
+  exit 0
+fi
+echo '{"structured_output":{"findings":[{"checkId":"has_primary_instructions","passed":true,"evidence":"Deep agent found repo instructions"}]},"usage":{"total_tokens":123},"total_cost_usd":0.001}'
+exit 0
+`,
+    "utf-8"
+  );
+  chmodSync(claudePath, 0o755);
+  return binDir;
 }
 
 describe("CLI integration", () => {
@@ -33,6 +68,10 @@ describe("CLI integration", () => {
     expect(stdout).toContain("Usage: agent-harness");
     expect(stdout).toContain("audit <path>");
     expect(stdout).toContain("--json");
+    expect(stdout).toContain("--tools");
+    expect(stdout).toContain("--deep");
+    expect(stdout).toContain("--tokens");
+    expect(stdout).toContain("--no-color");
   });
 
   it("--version prints version and exits 0", () => {
@@ -67,10 +106,16 @@ describe("CLI integration", () => {
     expect(stderr).toContain("--output requires --json");
   });
 
-  it("invalid --tool exits 2", () => {
-    const { stderr, status } = run(["audit", ".", "--tool", "not-a-tool"]);
+  it("invalid --tools exits 2", () => {
+    const { stderr, status } = run(["audit", ".", "--tools", "not-a-tool"]);
     expect(status).toBe(2);
-    expect(stderr).toContain("--tool must be one of");
+    expect(stderr).toContain("--tools must be one of");
+  });
+
+  it("--tool alias still works and warns", () => {
+    const { stderr, status } = run(["audit", resolve(FIXTURES, "minimal"), "--tool", "claude-code", "--json"]);
+    expect(status).toBe(0);
+    expect(stderr).toContain("deprecated");
   });
 
   // ── Text output: minimal fixture ────────────────────────────────────────
@@ -79,12 +124,16 @@ describe("CLI integration", () => {
     const { stdout, status } = run(["audit", resolve(FIXTURES, "minimal")]);
     expect(status).toBe(0);
     expect(stdout).toContain("Agent Harness Score");
+    expect(stdout).toContain("This audit scores what agents need to work safely in-repo");
+    expect(stdout).toContain("understand the repo, scope changes, or verify results");
     expect(stdout).toContain("NOT READY");
     expect(stdout).toContain("Instructions");
     expect(stdout).toContain("Context");
     expect(stdout).toContain("Tooling");
     expect(stdout).toContain("Feedback");
     expect(stdout).toContain("Safety");
+    expect(stdout).toContain("Target tools: all");
+    expect(stdout).toContain("Tool-Specific Readiness");
   });
 
   it("category Missing: lines do not include 'present' or 'exists' suffix (THU-89)", () => {
@@ -113,6 +162,7 @@ describe("CLI integration", () => {
     expect(status).toBe(0);
     expect(stdout).toContain("Agent Harness Score");
     expect(stdout).toContain("READY");
+    expect(stdout).toContain("No tool-specific issues detected");
   });
 
   it("strong fixture scores high (above 80/100)", () => {
@@ -134,7 +184,7 @@ describe("CLI integration", () => {
   it("--json output conforms to report schema", () => {
     const { stdout } = run(["audit", resolve(FIXTURES, "minimal"), "--json"]);
     const report = JSON.parse(stdout);
-    expect(report).toHaveProperty("version");
+    expect(report.version).toBe("2");
     expect(report).toHaveProperty("generatedAt");
     expect(report).toHaveProperty("input");
     expect(report).toHaveProperty("evidence");
@@ -142,7 +192,13 @@ describe("CLI integration", () => {
     expect(report.scoring).toHaveProperty("overallScore");
     expect(report.scoring).toHaveProperty("categoryScores");
     expect(report.scoring).toHaveProperty("topBlockers");
+    expect(report.scoring).toHaveProperty("toolReadiness");
+    expect(report.scoring).toHaveProperty("toolSpecificFixes");
     expect(typeof report.scoring.overallScore).toBe("number");
+    expect(report.input.toolsRequested).toBe("all");
+    expect(report.input.toolsResolved).toEqual(
+      expect.arrayContaining(["claude-code", "codex", "cursor", "copilot", "other"]),
+    );
   });
 
   it("--json output does not contain terminal colour codes", () => {
@@ -174,6 +230,101 @@ describe("CLI integration", () => {
     }
   });
 
+  it("--tools can narrow the target set in JSON output", () => {
+    const { stdout, status } = run([
+      "audit",
+      resolve(FIXTURES, "minimal"),
+      "--json",
+      "--tools",
+      "claude-code,codex",
+    ]);
+    expect(status).toBe(0);
+    const report = JSON.parse(stdout);
+    expect(report.input.toolsRequested).toEqual(["claude-code", "codex"]);
+    expect(report.input.toolsResolved).toEqual(["claude-code", "codex"]);
+    expect(report.scoring.toolReadiness).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ tool: "claude-code", status: "needs-work" }),
+        expect.objectContaining({ tool: "codex" }),
+      ]),
+    );
+  });
+
+  it("--json output includes tool-specific fixes when Claude is missing", () => {
+    const { stdout, status } = run([
+      "audit",
+      resolve(FIXTURES, "minimal"),
+      "--json",
+      "--tools",
+      "claude-code",
+    ]);
+    expect(status).toBe(0);
+    const report = JSON.parse(stdout);
+    expect(report.scoring.toolSpecificFixes.length).toBeGreaterThanOrEqual(1);
+    expect(report.scoring.toolSpecificFixes.some((item: { checkId?: string }) => item.checkId === "has_claude_md")).toBe(true);
+  });
+
+  it("--json output includes tool readiness entries for the default all-tools audit", () => {
+    const { stdout } = run(["audit", resolve(FIXTURES, "minimal"), "--json"]);
+    const report = JSON.parse(stdout);
+    expect(report.scoring.toolReadiness).toHaveLength(5);
+    expect(report.scoring.toolReadiness).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ tool: "claude-code", status: "needs-work" }),
+        expect.objectContaining({ tool: "codex", status: "not-scored" }),
+      ]),
+    );
+    expect(report.scoring.toolReadiness.some((item: { tool?: string; status?: string }) => item.tool === "claude-code" && item.status === "needs-work")).toBe(true);
+  });
+
+  it("--deep --json includes deepAudit when an agent is available", () => {
+    const tmpDir = mkdtempSync(resolve(tmpdir(), "harness-deep-"));
+    const binDir = createFakeClaudeBin(tmpDir);
+    try {
+      const { stdout, status } = run(
+        ["audit", resolve(FIXTURES, "minimal"), "--json", "--deep"],
+        { PATH: binDir }
+      );
+      expect(status).toBe(0);
+      const report = JSON.parse(stdout);
+      expect(report.input.deep).toBe(true);
+      expect(report).toHaveProperty("deepAudit");
+      expect(report.deepAudit.agentName).toBe("claude-code");
+      expect(Array.isArray(report.deepAudit.findings)).toBe(true);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("--deep exits 2 when no supported agents are available", () => {
+    const tmpDir = mkdtempSync(resolve(tmpdir(), "harness-no-agents-"));
+    try {
+      const { stderr, status } = run(
+        ["audit", resolve(FIXTURES, "minimal"), "--deep"],
+        { PATH: tmpDir }
+      );
+      expect(status).toBe(2);
+      expect(stderr).toContain("no supported agent found");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("--deep --agent fails when requested agent is unavailable", () => {
+    const tmpDir = mkdtempSync(resolve(tmpdir(), "harness-agent-unavailable-"));
+    const binDir = createFakeClaudeBin(tmpDir);
+    try {
+      const { stderr, status } = run(
+        ["audit", resolve(FIXTURES, "minimal"), "--deep", "--agent", "codex"],
+        { PATH: binDir }
+      );
+      expect(status).toBe(2);
+      expect(stderr).toContain("requested agent is not available: codex");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   // ── --write-artifacts ────────────────────────────────────────────────────
 
   it("--write-artifacts creates generated files in target dir", () => {
@@ -182,6 +333,7 @@ describe("CLI integration", () => {
       const { status } = run(["audit", tmpDir, "--write-artifacts"]);
       expect(status).toBe(0);
       expect(existsSync(resolve(tmpDir, "AGENTS.generated.md"))).toBe(true);
+      expect(existsSync(resolve(tmpDir, "CLAUDE.generated.md"))).toBe(true);
       expect(existsSync(resolve(tmpDir, "validation-checklist.generated.md"))).toBe(true);
       expect(existsSync(resolve(tmpDir, "architecture-outline.generated.md"))).toBe(true);
     } finally {
@@ -210,7 +362,7 @@ describe("CLI integration", () => {
     const report = JSON.parse(stdout);
     expect(report).toHaveProperty("artifacts");
     expect(Array.isArray(report.artifacts)).toBe(true);
-    expect(report.artifacts.length).toBe(3);
+    expect(report.artifacts.length).toBe(4);
     expect(report.artifacts[0]).toHaveProperty("content");
     expect(typeof report.artifacts[0].content).toBe("string");
     expect(report.artifacts[0].content.length).toBeGreaterThan(0);

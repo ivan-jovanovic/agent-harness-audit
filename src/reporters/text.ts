@@ -1,30 +1,38 @@
-import type { AuditReport, CategoryScore, Blocker, FixItem } from "../types.js";
+import type { AuditReport, CategoryScore, Blocker, FixItem, ToolReadiness, ToolSpecificFixItem } from "../types.js";
 
 // ── ANSI helpers ──────────────────────────────────────────────────────────────
 
 const isTTY = process.stdout.isTTY === true;
+let colorEnabled = isTTY;
 
-const RESET = isTTY ? "\x1b[0m" : "";
-const BOLD = isTTY ? "\x1b[1m" : "";
-const RED = isTTY ? "\x1b[31m" : "";
-const YELLOW = isTTY ? "\x1b[33m" : "";
-const GREEN = isTTY ? "\x1b[32m" : "";
-const CYAN = isTTY ? "\x1b[36m" : "";
+const RESET = "\x1b[0m";
+const BOLD = "\x1b[1m";
+const RED = "\x1b[31m";
+const YELLOW = "\x1b[33m";
+const GREEN = "\x1b[32m";
+const CYAN = "\x1b[36m";
+
+function withColor(code: string, s: string): string {
+  if (!colorEnabled) {
+    return s;
+  }
+  return `${code}${s}${RESET}`;
+}
 
 function red(s: string): string {
-  return `${RED}${s}${RESET}`;
+  return withColor(RED, s);
 }
 function yellow(s: string): string {
-  return `${YELLOW}${s}${RESET}`;
+  return withColor(YELLOW, s);
 }
 function green(s: string): string {
-  return `${GREEN}${s}${RESET}`;
+  return withColor(GREEN, s);
 }
 function cyan(s: string): string {
-  return `${CYAN}${s}${RESET}`;
+  return withColor(CYAN, s);
 }
 function bold(s: string): string {
-  return `${BOLD}${s}${RESET}`;
+  return withColor(BOLD, s);
 }
 
 // ── Layout constants ──────────────────────────────────────────────────────────
@@ -77,11 +85,12 @@ function scoreLabel(score: number): string {
 // ── Category summary line ─────────────────────────────────────────────────────
 
 const CHECK_SHORT_LABEL: Record<string, string> = {
-  has_agents_md: "AGENTS.md",
-  has_claude_md: "CLAUDE.md",
+  has_primary_instructions: "primary instructions",
+  has_generic_skills: "generic skills",
+  has_tool_skills: "tool skills",
   has_readme: "README",
-  has_contributing: "CONTRIBUTING.md",
   has_architecture_docs: "architecture docs",
+  has_docs_index: "docs index",
   has_docs_dir: "docs/",
   has_tsconfig: "tsconfig.json",
   has_env_example: ".env.example",
@@ -93,7 +102,6 @@ const CHECK_SHORT_LABEL: Record<string, string> = {
   has_test_script: "test script",
   has_test_dir: "test dir",
   has_test_files: "test files",
-  has_ci_workflows: "CI workflows",
 };
 
 function truncate(s: string, max: number): string {
@@ -140,11 +148,68 @@ function effortLabel(effort: string): string {
   }
 }
 
+function formatToolName(tool: string): string {
+  switch (tool) {
+    case "claude-code":
+      return "Claude Code";
+    case "codex":
+      return "Codex";
+    case "cursor":
+      return "Cursor";
+    case "copilot":
+      return "Copilot";
+    default:
+      return "Other";
+  }
+}
+
+function renderToolReadiness(toolReadiness: ToolReadiness[], out: (s: string) => void): void {
+  out(rule());
+  out(`  ${bold("Tool-Specific Readiness")}`);
+  out(rule());
+  out("");
+
+  const actionable = toolReadiness.filter((item) => item.status === "needs-work");
+  const notScored = toolReadiness.filter((item) => item.status === "not-scored");
+
+  if (actionable.length === 0) {
+    out("  No tool-specific issues detected");
+  } else {
+    for (const item of actionable) {
+      const score = `${item.score ?? 0} / ${item.maxScore ?? 5}`;
+      const missing = item.checks
+        ?.filter((check) => !check.passed)
+        .map((check) => shortLabel(check.id, check.label))
+        .join(", ");
+      out(`  ${formatToolName(item.tool).padEnd(14)}  ${score.padEnd(5)}   Missing: ${missing}`);
+    }
+  }
+
+  if (notScored.length > 0) {
+    const labels = notScored.map((item) => formatToolName(item.tool)).join(", ");
+    out(`  Other targets: ${labels}  (${notScored[0].note})`);
+  }
+
+  out("");
+}
+
+function renderAuditRationale(out: (s: string) => void): void {
+  out("  This audit scores what agents need to work safely in-repo:");
+  out("  clear instructions, discoverable context, runnable validation,");
+  out("  and environment/setup guidance.");
+  out("");
+  out("  Missing items matter when they remove the agent's ability to");
+  out("  understand the repo, scope changes, or verify results.");
+  out("");
+}
+
 // ── Main reporter ─────────────────────────────────────────────────────────────
 
 export function reportText(report: AuditReport): void {
+  colorEnabled = isTTY && !report.input.noColor;
+
   const { scoring, evidence } = report;
-  const { overallScore, categoryScores, topBlockers, fixPlan } = scoring;
+  const { overallScore, categoryScores, topBlockers, fixPlan, toolReadiness, toolSpecificFixes } = scoring;
   const out = (s: string) => process.stdout.write(s + "\n");
 
   // ── Warnings (if any) ─────────────────────────────────────────────────────
@@ -155,6 +220,15 @@ export function reportText(report: AuditReport): void {
     out("");
   }
 
+  if (report.input.deep && report.deepAudit) {
+    const deep = report.deepAudit;
+    const usageLabel = report.input.tokens
+      ? `tokens: ${deep.tokensActual > 0 ? deep.tokensActual : `~${deep.tokenEstimate}`}`
+      : `cost: $${(deep.costActualUsd > 0 ? deep.costActualUsd : deep.costEstimateUsd).toFixed(4)}`;
+    out(`  ${yellow("⚠")}  Deep audit — results may vary between runs. Agent: ${deep.agentName}. ${usageLabel}.`);
+    out("");
+  }
+
   // ── Zone 1: Score banner ──────────────────────────────────────────────────
   out(rule());
   out(
@@ -162,6 +236,8 @@ export function reportText(report: AuditReport): void {
   );
   out(rule());
   out("");
+
+  renderAuditRationale(out);
 
   // ── Zone 2: Category table ────────────────────────────────────────────────
   const CAT_LABEL_WIDTH = 14;
@@ -174,8 +250,10 @@ export function reportText(report: AuditReport): void {
   }
   out("");
 
-  // Happy path: no blockers
-  if (topBlockers.length === 0) {
+  renderToolReadiness(toolReadiness, out);
+
+  // Happy path: no blockers or tool-specific fixes
+  if (topBlockers.length === 0 && toolSpecificFixes.length === 0) {
     out(rule());
     out("  This project is well-configured for AI coding agent use.");
     out("  No critical blockers found.");
@@ -184,22 +262,40 @@ export function reportText(report: AuditReport): void {
     return;
   }
 
-  // ── Zone 3: Top blockers ──────────────────────────────────────────────────
-  out(rule());
-  out(`  ${bold("Top Blockers")}`);
-  out(rule());
-  out("");
-  renderBlockers(topBlockers, out);
+  if (topBlockers.length > 0) {
+    // ── Zone 3: Top blockers ────────────────────────────────────────────────
+    out(rule());
+    out(`  ${bold("Top Blockers")}`);
+    out(rule());
+    out("");
+    const deepEvidenceByCheck = Object.fromEntries(
+      (report.deepAudit?.findings ?? []).map((finding) => [finding.checkId, finding.evidence]),
+    );
+    renderBlockers(topBlockers, out, deepEvidenceByCheck);
 
-  // ── Zone 4: Fix plan ──────────────────────────────────────────────────────
-  out(rule());
-  out(`  ${bold("Fix Plan")}`);
-  out(rule());
-  out("");
-  renderFixPlan(fixPlan, out);
+    // ── Zone 4: Fix plan ────────────────────────────────────────────────────
+    out(rule());
+    out(`  ${bold("Fix Plan")}`);
+    out(rule());
+    out("");
+    renderFixPlan(fixPlan, out);
+  } else {
+    out(rule());
+    out("  No core blockers found.");
+    out(rule());
+    out("");
+  }
+
+  if (toolSpecificFixes.length > 0) {
+    out(rule());
+    out(`  ${bold("Tool-Specific Fixes")}`);
+    out(rule());
+    out("");
+    renderToolSpecificFixes(toolSpecificFixes, out);
+  }
 
   // ── Zone 5: Next step hint ────────────────────────────────────────────────
-  if (overallScore < 80) {
+  if (overallScore < 80 || toolSpecificFixes.length > 0) {
     out(rule());
     out("");
     out(
@@ -212,15 +308,18 @@ export function reportText(report: AuditReport): void {
 
 function renderBlockers(
   blockers: Blocker[],
-  out: (s: string) => void
+  out: (s: string) => void,
+  deepEvidenceByCheckId: Record<string, string> = {},
 ): void {
   for (let i = 0; i < blockers.length; i++) {
     const b = blockers[i];
+    const evidence = deepEvidenceByCheckId[b.checkId];
+    const why = evidence && evidence.length > 0 ? evidence : b.why;
     out(`  ${i + 1}. ${bold(b.title)}`);
-    if (b.why) {
-      out(`     ${b.why}`);
+    if (why) {
+      out(`     ${why}`);
     }
-    if (b.likelyFailureMode && b.likelyFailureMode !== b.why) {
+    if (b.likelyFailureMode && b.likelyFailureMode !== why) {
       out(`     ${b.likelyFailureMode}`);
     }
     const action = BLOCKER_ACTION_TABLE[b.checkId];
@@ -232,11 +331,16 @@ function renderBlockers(
 }
 
 const BLOCKER_ACTION_TABLE: Record<string, string> = {
-  has_agents_md: "Add AGENTS.md with project-specific rules for your coding agent.",
-  has_claude_md: "Create CLAUDE.md at your project root.",
+  has_primary_instructions:
+    "Add AGENTS.md for general use, or CLAUDE.md if this repo is intentionally Claude-only.",
+  has_generic_skills: "Add at least one reusable generic project skill under .agents/skills/.../SKILL.md.",
+  has_tool_skills:
+    "Add tool-specific skills for every selected supported tool under .claude/skills/.../SKILL.md and/or .cursor/skills/.../SKILL.md.",
   has_readme: "Add README.md with a description, setup steps, and basic usage.",
-  has_contributing: "Add CONTRIBUTING.md describing your branch strategy and review process.",
-  has_architecture_docs: "Add ARCHITECTURE.md describing key directories and design decisions.",
+  has_architecture_docs:
+    "Add a discoverable architecture guide at the repo root or in docs/ (for example ARCHITECTURE.md, SYSTEM.md, or docs/repo-structure.md).",
+  has_docs_index:
+    "Add a docs index such as docs/index.md or docs/README.md so agents have a clear entrypoint into the repository documentation.",
   has_docs_dir: "Create a docs/ directory and start documentation there.",
   has_tsconfig: "Add tsconfig.json to the project root.",
   has_env_example: "Add .env.example listing all required environment variable names.",
@@ -248,7 +352,6 @@ const BLOCKER_ACTION_TABLE: Record<string, string> = {
   has_test_script: 'Add a "test" script to package.json.',
   has_test_dir: "Create a tests/ directory with at least one test file.",
   has_test_files: "Add test files (e.g. src/utils.test.ts) alongside your source.",
-  has_ci_workflows: "Add a GitHub Actions workflow at .github/workflows/ci.yml.",
 };
 
 function renderFixPlan(fixPlan: FixItem[], out: (s: string) => void): void {
@@ -267,4 +370,14 @@ function renderFixPlan(fixPlan: FixItem[], out: (s: string) => void): void {
     }
     out("");
   }
+}
+
+function renderToolSpecificFixes(
+  fixPlan: ToolSpecificFixItem[],
+  out: (s: string) => void
+): void {
+  for (const item of fixPlan) {
+    out(`  ☐ [${formatToolName(item.tool)}] ${item.action}`);
+  }
+  out("");
 }

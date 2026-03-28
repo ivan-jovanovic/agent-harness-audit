@@ -2,7 +2,7 @@
 
 import { resolve } from "node:path";
 import minimist from "minimist";
-import type { AuditInput, AgentTool, SafetyLevel } from "./types.js";
+import type { AuditInput, TargetTool, SafetyLevel, AgentName, ToolsRequested } from "./types.js";
 import { AuditUsageError } from "./types.js";
 import { runAuditCommand } from "./commands/audit.js";
 
@@ -14,10 +14,17 @@ Commands:
                  Defaults to current working directory if no path given
 
 Options:
-  --tool <name>          AI tool in use: claude-code, cursor, copilot, codex, other
-                         Default: other
+  --tools <list|all>     Target tool ecosystems: claude-code, codex, cursor, copilot, other, all
+                         Default: all
+  --tool <name>          Deprecated alias for --tools <name>
   --failure-mode <text>  Describe what is currently failing (free text)
   --safety-level <lvl>   low | medium | high  (default: medium)
+  --deep                 Run deep audit using a supported coding agent
+  --agent <name>         Agent to use for deep audit: claude-code, codex
+  --tokens               Show token usage instead of cost in deep mode
+  --verbose              Enable verbose output
+  --debug                Show debug details on errors
+  --no-color             Disable ANSI colors in terminal output
   --json                 Output machine-readable JSON instead of terminal report
   --write-artifacts      Write starter files into the target directory
   --output <file>        Write JSON output to a file (requires --json)
@@ -26,27 +33,103 @@ Options:
 
 Examples:
   agent-harness audit .
-  agent-harness audit /path/to/repo --tool claude-code
+  agent-harness audit /path/to/repo --tools claude-code,codex
+  agent-harness audit . --deep
   agent-harness audit . --json --output report.json
   agent-harness audit . --write-artifacts
 `;
 
-const VALID_TOOLS: AgentTool[] = ["claude-code", "cursor", "copilot", "codex", "other"];
+const VALID_TOOLS: TargetTool[] = ["claude-code", "codex", "cursor", "copilot", "other"];
+const VALID_AGENTS: AgentName[] = ["claude-code", "codex"];
 const VALID_SAFETY_LEVELS: SafetyLevel[] = ["low", "medium", "high"];
+
+function parseTools(rawTools: string | undefined, rawTool: string | undefined): {
+  toolsRequested: ToolsRequested;
+  toolsResolved: TargetTool[];
+} {
+  if (rawTools && rawTool) {
+    process.stderr.write("Error: use either --tools or --tool, not both\n");
+    process.exit(2);
+  }
+
+  if (rawTool) {
+    if (!VALID_TOOLS.includes(rawTool as TargetTool)) {
+      process.stderr.write(
+        `Error: --tool must be one of: ${VALID_TOOLS.join(", ")}. Got: ${rawTool}\n`,
+      );
+      process.exit(2);
+    }
+    process.stderr.write("Warning: --tool is deprecated; use --tools instead\n");
+    return {
+      toolsRequested: [rawTool as TargetTool],
+      toolsResolved: [rawTool as TargetTool],
+    };
+  }
+
+  if (!rawTools || rawTools === "all") {
+    return {
+      toolsRequested: "all",
+      toolsResolved: [...VALID_TOOLS],
+    };
+  }
+
+  const requested = rawTools
+    .split(",")
+    .map((tool) => tool.trim())
+    .filter((tool) => tool.length > 0);
+
+  if (requested.length === 0) {
+    process.stderr.write("Error: --tools must not be empty\n");
+    process.exit(2);
+  }
+
+  if (requested.includes("all")) {
+    process.stderr.write("Error: --tools cannot combine 'all' with specific tools\n");
+    process.exit(2);
+  }
+
+  const invalid = requested.filter((tool) => !VALID_TOOLS.includes(tool as TargetTool));
+  if (invalid.length > 0) {
+    process.stderr.write(
+      `Error: --tools must be one of: ${VALID_TOOLS.join(", ")}, all. Got: ${invalid.join(", ")}\n`,
+    );
+    process.exit(2);
+  }
+
+  const unique = [...new Set(requested)] as TargetTool[];
+  return {
+    toolsRequested: unique,
+    toolsResolved: unique,
+  };
+}
 
 export function parseArgs(argv: string[]): { command: string; input: AuditInput } {
   const args = minimist(argv.slice(2), {
-    boolean: ["help", "version", "json", "write-artifacts"],
-    string: ["tool", "failure-mode", "safety-level", "output"],
+    boolean: [
+      "help",
+      "version",
+      "json",
+      "write-artifacts",
+      "deep",
+      "tokens",
+      "verbose",
+      "debug",
+      "no-color",
+    ],
+    string: ["tool", "tools", "failure-mode", "safety-level", "output", "agent"],
     alias: {
       h: "help",
       v: "version",
     },
     default: {
-      tool: "other",
       "safety-level": "medium",
       json: false,
       "write-artifacts": false,
+      deep: false,
+      tokens: false,
+      verbose: false,
+      debug: false,
+      "no-color": false,
     },
   });
 
@@ -67,10 +150,15 @@ export function parseArgs(argv: string[]): { command: string; input: AuditInput 
     process.exit(2);
   }
 
-  const tool = args["tool"] as string;
-  if (!VALID_TOOLS.includes(tool as AgentTool)) {
+  const { toolsRequested, toolsResolved } = parseTools(
+    args["tools"] as string | undefined,
+    args["tool"] as string | undefined,
+  );
+
+  const agentName = args["agent"] as string | undefined;
+  if (agentName && !VALID_AGENTS.includes(agentName as AgentName)) {
     process.stderr.write(
-      `Error: --tool must be one of: ${VALID_TOOLS.join(", ")}. Got: ${tool}\n`,
+      `Error: --agent must be one of: ${VALID_AGENTS.join(", ")}. Got: ${agentName}\n`,
     );
     process.exit(2);
   }
@@ -92,12 +180,19 @@ export function parseArgs(argv: string[]): { command: string; input: AuditInput 
 
   const input: AuditInput = {
     path: targetPath,
-    tool: tool as AgentTool,
+    toolsRequested,
+    toolsResolved,
     failureMode: args["failure-mode"] as string | undefined,
     safetyLevel: safetyLevel as SafetyLevel,
     jsonMode: args["json"] as boolean,
     writeArtifacts: args["write-artifacts"] as boolean,
     outputFile: args["output"] as string | undefined,
+    deep: args["deep"] as boolean,
+    agentName: agentName as AgentName | undefined,
+    tokens: args["tokens"] as boolean,
+    verbose: args["verbose"] as boolean,
+    debug: args["debug"] as boolean,
+    noColor: args["no-color"] as boolean,
   };
 
   return { command, input };

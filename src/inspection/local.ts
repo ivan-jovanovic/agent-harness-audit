@@ -28,48 +28,91 @@ async function isDir(p: string): Promise<boolean> {
   }
 }
 
+async function hasSkillFile(root: string): Promise<boolean> {
+  try {
+    const entries = await readdir(root, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = join(root, entry.name);
+      if (entry.isFile() && entry.name === "SKILL.md") {
+        return true;
+      }
+      if (entry.isDirectory() && (await hasSkillFile(fullPath))) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+const ARCHITECTURE_DOC_RE =
+  /^(architecture|system(?:-design|-architecture)?|repo-(?:structure|map)|codebase-(?:guide|map)|structure|design)(?:[._-].+)?\.(md|mdx|txt)$/i;
+
+async function hasArchitectureDoc(root: string): Promise<boolean> {
+  try {
+    const entries = await readdir(root, { withFileTypes: true });
+    return entries.some((entry) => entry.isFile() && ARCHITECTURE_DOC_RE.test(entry.name));
+  } catch {
+    return false;
+  }
+}
+
+async function hasDocsIndexFile(root: string): Promise<boolean> {
+  try {
+    const entries = await readdir(root, { withFileTypes: true });
+    return entries.some(
+      (entry) =>
+        entry.isFile() &&
+        /^(index|README)\.(md|mdx|txt)$/i.test(entry.name),
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function collectFileSignals(projectPath: string): Promise<FileSignals> {
   const [
     hasAgentsMd,
     hasCLAUDEMd,
     hasReadme,
-    hasContributing,
+    hasGenericSkills,
+    hasClaudeSkills,
+    hasCursorSkills,
     hasEnvExample,
     hasDocsDir,
-    hasArchMd,
-    hasDocsArchitecture,
+    hasDocsIndex,
+    hasRootArchitectureDoc,
+    hasDocsArchitectureDoc,
   ] = await Promise.all([
     exists(join(projectPath, "AGENTS.md")),
     exists(join(projectPath, "CLAUDE.md")),
     (async () =>
       (await exists(join(projectPath, "README.md"))) ||
       (await exists(join(projectPath, "README"))))(),
-    exists(join(projectPath, "CONTRIBUTING.md")),
+    hasSkillFile(join(projectPath, ".agents", "skills")),
+    hasSkillFile(join(projectPath, ".claude", "skills")),
+    hasSkillFile(join(projectPath, ".cursor", "skills")),
     exists(join(projectPath, ".env.example")),
     isDir(join(projectPath, "docs")),
-    exists(join(projectPath, "ARCHITECTURE.md")),
-    (async () => {
-      const docsDir = join(projectPath, "docs");
-      if (!(await isDir(docsDir))) return false;
-      try {
-        const entries = await readdir(docsDir);
-        return entries.some((f) => f.startsWith("architecture"));
-      } catch {
-        return false;
-      }
-    })(),
+    hasDocsIndexFile(join(projectPath, "docs")),
+    hasArchitectureDoc(projectPath),
+    hasArchitectureDoc(join(projectPath, "docs")),
   ]);
 
-  const hasArchitectureDocs = hasArchMd || hasDocsArchitecture;
+  const hasArchitectureDocs = hasRootArchitectureDoc || hasDocsArchitectureDoc;
 
   return {
     hasAgentsMd,
     hasCLAUDEMd,
     hasReadme,
-    hasContributing,
+    hasGenericSkills,
+    hasClaudeSkills,
+    hasCursorSkills,
     hasArchitectureDocs,
     hasEnvExample,
     hasDocsDir,
+    hasDocsIndex,
   };
 }
 

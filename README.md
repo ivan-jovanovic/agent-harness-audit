@@ -2,7 +2,7 @@
 
 Audit a project for agent-readiness before giving AI coding agents broad autonomy.
 
-Scans a repository and produces a scored report across five categories — **instructions**, **context**, **tooling**, **feedback**, and **safety** — identifying blockers and a prioritised fix plan.
+Scans a repository and produces a scored report across five core categories — **instructions**, **context**, **tooling**, **feedback**, and **safety** — plus tool-specific readiness overlays, identifying blockers and a prioritised fix plan.
 
 ## Install
 
@@ -26,8 +26,9 @@ Commands:
                  Defaults to current working directory if no path given
 
 Options:
-  --tool <name>          AI tool in use: claude-code, cursor, copilot, codex, other
-                         Default: other
+  --tools <list|all>     Target tools to audit: claude-code, codex, cursor,
+                         copilot, other, or all (default)
+  --tool <name>          Deprecated alias for --tools <name>
   --failure-mode <text>  Describe what is currently failing (free text)
   --safety-level <lvl>   low | medium | high  (default: medium)
   --json                 Output machine-readable JSON instead of terminal report
@@ -43,8 +44,11 @@ Options:
 # Audit current directory
 agent-harness audit .
 
-# Audit a specific repo, targeting Claude Code
-agent-harness audit /path/to/repo --tool claude-code
+# Audit a specific repo for all supported target tools
+agent-harness audit /path/to/repo --tools all
+
+# Audit a specific repo, targeting Claude Code and Codex
+agent-harness audit /path/to/repo --tools claude-code,codex
 
 # Machine-readable output
 agent-harness audit . --json --output report.json
@@ -57,13 +61,18 @@ agent-harness audit . --write-artifacts
 
 | Category     | What it checks |
 |--------------|----------------|
-| instructions | AGENTS.md / CLAUDE.md presence and quality |
-| context      | README, architecture docs, contributing guide |
+| instructions | Primary instructions plus repo-local skills. `AGENTS.md` is the default primary surface; `CLAUDE.md` can also satisfy the primary check when the repo uses Claude as its native instruction surface or when the selected supported tools are fully covered by native Claude/Cursor skills. Generic skills live under `.agents/skills`, and Claude/Cursor native skills live under `.claude/skills` and `.cursor/skills`. |
+| context      | README, architecture docs, docs/ structure, env examples |
 | tooling      | Package scripts (lint, typecheck, test, build), lockfile |
-| feedback     | CI workflows, test framework setup |
-| safety       | .env.example, safety-level configuration |
+| feedback     | Test command and test-file signals |
+| safety       | .env.example, architecture guidance |
 
 Each category is scored 0–5. The overall score drives a colour-coded readiness rating and a ranked fix plan.
+
+Instructions scoring is tool-aware:
+- `AGENTS.md` remains the preferred default.
+- `CLAUDE.md` can satisfy the primary instructions check for Claude-only audits, for repos with a single clear Claude-native instruction surface, and for mirrored Claude/Cursor native setups where the selected supported tools already have native skills coverage.
+- When exactly one supported tool is selected and its native skills exist, missing `.agents/skills` does not reduce the Instructions score.
 
 ## Local development
 

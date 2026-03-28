@@ -1,35 +1,30 @@
-import type { RepoEvidence, CategoryScore, CheckResult } from "../../types.js";
+import type { RepoEvidence, CategoryScore, CheckResult, DeepCheckOverrides } from "../../types.js";
 
 const CATEGORY_WEIGHT = 0.10;
 
-export function scoreSafety(evidence: RepoEvidence): CategoryScore {
+export function scoreSafety(evidence: RepoEvidence, deepOverrides?: DeepCheckOverrides): CategoryScore {
+  const hasEnvExample = evidence.files.hasEnvExample || deepOverrides?.has_env_example === true;
+  const hasArchitectureDocs =
+    evidence.files.hasArchitectureDocs || deepOverrides?.has_architecture_docs === true;
+
   const checks: CheckResult[] = [
     {
       id: "has_env_example",
-      passed: evidence.files.hasEnvExample,
-      weight: 0.40,
+      passed: hasEnvExample,
+      weight: 0.60,
       label: ".env.example present",
-      failureNote: evidence.files.hasEnvExample
+      failureNote: hasEnvExample
         ? undefined
         : "No .env.example found — agents may create or modify code that references environment variables without knowing which are required or what format they take.",
     },
     {
-      id: "has_contributing",
-      passed: evidence.files.hasContributing,
-      weight: 0.30,
-      label: "CONTRIBUTING.md present",
-      failureNote: evidence.files.hasContributing
-        ? undefined
-        : "No CONTRIBUTING.md found — agents have no documented contribution model to follow (branch strategy, commit conventions, review process).",
-    },
-    {
       id: "has_architecture_docs",
-      passed: evidence.files.hasArchitectureDocs,
-      weight: 0.30,
+      passed: hasArchitectureDocs,
+      weight: 0.40,
       label: "Architecture docs exist",
-      failureNote: evidence.files.hasArchitectureDocs
+      failureNote: hasArchitectureDocs
         ? undefined
-        : "No ARCHITECTURE.md or docs/architecture.* found — agents cannot build a stable mental model of the codebase structure from documentation.",
+        : "No discoverable architecture guide found at the repo root or in docs/ — agents cannot build a stable mental model of the codebase structure from documentation.",
     },
   ];
 

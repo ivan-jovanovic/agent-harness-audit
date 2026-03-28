@@ -10,10 +10,13 @@ const BASE_EVIDENCE: RepoEvidence = {
     hasAgentsMd: false,
     hasCLAUDEMd: false,
     hasReadme: false,
-    hasContributing: false,
+    hasGenericSkills: false,
+    hasClaudeSkills: false,
+    hasCursorSkills: false,
     hasArchitectureDocs: false,
     hasEnvExample: false,
     hasDocsDir: false,
+    hasDocsIndex: false,
   },
   packages: {
     hasPackageJson: false,
@@ -35,7 +38,8 @@ const BASE_EVIDENCE: RepoEvidence = {
 
 const BASE_INPUT: AuditInput = {
   path: "/tmp/test-project",
-  tool: "other",
+  toolsRequested: "all",
+  toolsResolved: ["claude-code", "codex", "cursor", "copilot", "other"],
   safetyLevel: "medium",
   jsonMode: false,
   writeArtifacts: true,
@@ -52,19 +56,20 @@ describe("generateArtifacts", () => {
     tmps.length = 0;
   });
 
-  it("writes all 3 artifact files into an empty directory", async () => {
+  it("writes all 4 artifact files into an empty directory", async () => {
     const dir = makeTmpDir();
     tmps.push(dir);
     const input = { ...BASE_INPUT, path: dir };
 
     const results = await generateArtifacts(dir, BASE_EVIDENCE, input, false);
 
-    expect(results).toHaveLength(3);
+    expect(results).toHaveLength(4);
     expect(results.every((r) => r.written)).toBe(true);
     expect(results.every((r) => !r.skipped)).toBe(true);
 
     const filenames = results.map((r) => r.filename);
     expect(filenames).toContain("AGENTS.generated.md");
+    expect(filenames).toContain("CLAUDE.generated.md");
     expect(filenames).toContain("validation-checklist.generated.md");
     expect(filenames).toContain("architecture-outline.generated.md");
   });
@@ -94,6 +99,19 @@ describe("generateArtifacts", () => {
 
     expect(agents.skipped).toBe(true);
     expect(agents.written).toBe(false);
+  });
+
+  it("skips CLAUDE.generated.md when CLAUDE.md already exists", async () => {
+    const dir = makeTmpDir();
+    tmps.push(dir);
+    writeFileSync(join(dir, "CLAUDE.md"), "# existing");
+    const input = { ...BASE_INPUT, path: dir };
+
+    const results = await generateArtifacts(dir, BASE_EVIDENCE, input, false);
+    const claude = results.find((r) => r.id === "claude")!;
+
+    expect(claude.skipped).toBe(true);
+    expect(claude.written).toBe(false);
   });
 
   it("skips AGENTS.generated.md when AGENTS.generated.md already exists", async () => {
@@ -137,35 +155,36 @@ describe("generateArtifacts", () => {
     expect(readdirSync(dir)).toHaveLength(0);
   });
 
-  it("includes Claude Code settings section when tool is claude-code", async () => {
+  it("includes Claude Code settings section when claude-code is targeted", async () => {
     const dir = makeTmpDir();
     tmps.push(dir);
-    const input = { ...BASE_INPUT, path: dir, tool: "claude-code" as const };
+    const input = { ...BASE_INPUT, path: dir, toolsResolved: ["claude-code"] };
 
     const results = await generateArtifacts(dir, BASE_EVIDENCE, input, false);
-    const agents = results.find((r) => r.id === "agents")!;
+    const claude = results.find((r) => r.id === "claude")!;
 
-    expect(agents.content).toContain("Claude Code Settings");
-    expect(agents.content).toContain("permissions");
+    expect(claude.content).toContain("Claude Code Settings");
+    expect(claude.content).toContain("permissions");
   });
 
-  it("does not include Claude Code section when tool is other", async () => {
+  it("does not generate Claude artifact when claude-code is not targeted", async () => {
     const dir = makeTmpDir();
     tmps.push(dir);
-    const input = { ...BASE_INPUT, path: dir, tool: "other" as const };
+    const input = { ...BASE_INPUT, path: dir, toolsResolved: ["other"] };
 
     const results = await generateArtifacts(dir, BASE_EVIDENCE, input, false);
-    const agents = results.find((r) => r.id === "agents")!;
+    expect(results.find((r) => r.id === "claude")).toBeUndefined();
 
+    const agents = results.find((r) => r.id === "agents")!;
     expect(agents.content).not.toContain("Claude Code Settings");
   });
 });
 
 describe("previewArtifacts", () => {
-  it("returns 3 artifacts with content, all written=false", () => {
+  it("returns 4 artifacts with content, all written=false", () => {
     const results = previewArtifacts("/some/project", BASE_EVIDENCE, BASE_INPUT);
 
-    expect(results).toHaveLength(3);
+    expect(results).toHaveLength(4);
     expect(results.every((r) => !r.written)).toBe(true);
     expect(results.every((r) => r.content.length > 0)).toBe(true);
   });
@@ -185,5 +204,17 @@ describe("previewArtifacts", () => {
     const results = previewArtifacts(strongFixture, BASE_EVIDENCE, BASE_INPUT);
     const agents = results.find((r) => r.id === "agents")!;
     expect(agents.skipped).toBe(true);
+  });
+
+  it("sets skipped=true for Claude artifact when canonical exists", () => {
+    const dir = makeTmpDir();
+    writeFileSync(join(dir, "CLAUDE.md"), "# existing");
+    try {
+      const results = previewArtifacts(dir, BASE_EVIDENCE, BASE_INPUT);
+      const claude = results.find((r) => r.id === "claude")!;
+      expect(claude.skipped).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

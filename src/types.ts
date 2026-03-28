@@ -10,17 +10,26 @@ export class AuditUsageError extends Error {
 
 // Input
 
-export type AgentTool = "claude-code" | "cursor" | "copilot" | "codex" | "other";
+export type TargetTool = "claude-code" | "cursor" | "copilot" | "codex" | "other";
 export type SafetyLevel = "low" | "medium" | "high";
+export type AgentName = "claude-code" | "codex";
+export type ToolsRequested = "all" | TargetTool[];
 
 export interface AuditInput {
   path: string;
-  tool: AgentTool;
+  toolsRequested: ToolsRequested;
+  toolsResolved: TargetTool[];
   failureMode?: string;
   safetyLevel: SafetyLevel;
   jsonMode: boolean;
   writeArtifacts: boolean;
   outputFile?: string;
+  deep: boolean;
+  agentName?: AgentName;
+  tokens: boolean;
+  verbose: boolean;
+  debug: boolean;
+  noColor: boolean;
 }
 
 // Evidence
@@ -29,10 +38,13 @@ export interface FileSignals {
   hasAgentsMd: boolean;
   hasCLAUDEMd: boolean;
   hasReadme: boolean;
-  hasContributing: boolean;
+  hasGenericSkills: boolean;
+  hasClaudeSkills: boolean;
+  hasCursorSkills: boolean;
   hasArchitectureDocs: boolean;
   hasEnvExample: boolean;
   hasDocsDir: boolean;
+  hasDocsIndex: boolean;
 }
 
 export interface PackageSignals {
@@ -78,9 +90,37 @@ export interface RepoEvidence {
   warnings: string[];
 }
 
+// Agent discovery / deep audit
+
+export interface AgentDiscoveryResult {
+  available: AgentName[];
+  selected?: AgentName;
+}
+
+export interface DeepAuditFinding {
+  categoryId: CategoryId;
+  checkId: string;
+  passed: boolean;
+  label: string;
+  evidence: string;
+  failureNote?: string;
+}
+
+export interface DeepAuditResult {
+  agentName: AgentName;
+  findings: DeepAuditFinding[];
+  tokenEstimate: number;
+  tokensActual: number;
+  costEstimateUsd: number;
+  costActualUsd: number;
+  durationMs: number;
+  rawResponse?: string;
+}
+
 // Scoring
 
 export type CategoryId = "instructions" | "context" | "tooling" | "feedback" | "safety";
+export type DeepCheckOverrides = Record<string, boolean>;
 
 export interface CheckResult {
   id: string;
@@ -88,6 +128,7 @@ export interface CheckResult {
   weight: number;
   label: string;
   failureNote?: string;
+  evidence?: string;
 }
 
 export interface CategoryScore {
@@ -116,17 +157,36 @@ export interface FixItem {
   priority: number;
 }
 
+export interface ToolReadiness {
+  tool: TargetTool;
+  status: "ready" | "needs-work" | "not-scored";
+  score?: number;
+  maxScore?: 5;
+  checks?: CheckResult[];
+  note?: string;
+}
+
+export interface ToolSpecificFixItem {
+  tool: TargetTool;
+  checkId: string;
+  action: string;
+  effort: "quick" | "medium" | "heavy";
+  priority: number;
+}
+
 export interface ScoringResult {
   overallScore: number;
   categoryScores: CategoryScore[];
   topBlockers: Blocker[];
   fixPlan: FixItem[];
+  toolReadiness: ToolReadiness[];
+  toolSpecificFixes: ToolSpecificFixItem[];
 }
 
 // Artifacts
 
 export interface ArtifactResult {
-  id: "agents" | "validation-checklist" | "architecture-outline";
+  id: "agents" | "claude" | "validation-checklist" | "architecture-outline";
   filename: string;
   targetPath: string;
   skipped: boolean;
@@ -137,10 +197,11 @@ export interface ArtifactResult {
 // Report
 
 export interface AuditReport {
-  version: "1";
+  version: "2";
   generatedAt: string;
   input: AuditInput;
   evidence: RepoEvidence;
   scoring: ScoringResult;
   artifacts: ArtifactResult[];
+  deepAudit?: DeepAuditResult;
 }

@@ -73,7 +73,6 @@ Auditing: /Users/alice/projects/my-app
   Reading package.json...        done
   Checking docs and instructions...  done
   Checking test signals...       done
-  Checking workflow configs...   done
   Scoring...                     done
 ```
 
@@ -102,20 +101,32 @@ Audit results have hierarchy: overall score → categories → individual blocke
   Agent Harness Score: 42 / 100  ●●●●○○○○○○  NEEDS WORK
 ─────────────────────────────────────────────────────
 
-  Instructions    ██░░░  2 / 5   Missing: AGENTS.md, CLAUDE.md
+  This audit scores what agents need to work safely in-repo:
+  clear instructions, discoverable context, runnable validation,
+  and environment/setup guidance.
+
+  Missing items matter when they remove the agent's ability to
+  understand the repo, scope changes, or verify results.
+
+  Instructions    ███░░  3 / 5   Missing: AGENTS.md, repo-local skills
   Context         ███░░  3 / 5   README exists, no architecture docs
   Tooling         █████  5 / 5   package.json ✓  lockfile ✓  scripts ✓
   Feedback        ██░░░  2 / 5   No test directory detected
-  Safety Gates    ██░░░  2 / 5   No .env.example, no contribution guide
+  Safety          ██░░░  2 / 5   No .env.example, no architecture docs
+
+  Tool-specific readiness
+  Claude Code     0 / 5          Missing: CLAUDE.md
+  Codex           ░░░░░  n/a     No tool-specific repo-level checks in v2
+  Cursor          ░░░░░  n/a     No tool-specific repo-level checks in v2
 
 ─────────────────────────────────────────────────────
   Top Blockers
 ─────────────────────────────────────────────────────
 
-  1. No agent instruction files (Instructions: 0 pts)
-     No AGENTS.md or CLAUDE.md found. Agents operating in this repo have
-     no explicit constraints or operating rules. This is the #1 cause of
-     agents editing too broadly or making wrong assumptions.
+  1. No primary instruction surface
+     No AGENTS.md found. Agents operating in this repo have no explicit
+     constraints or operating rules. This is the #1 cause of agents editing
+     too broadly or making wrong assumptions.
      → Add AGENTS.md with project-specific rules for your coding agent.
 
   2. No test signals (Feedback: 0 pts)
@@ -124,7 +135,7 @@ Audit results have hierarchy: overall score → categories → individual blocke
      verify their own changes.
      → Add at least one test file and a `test` script to package.json.
 
-  3. No environment documentation (Safety Gates: 0 pts)
+  3. No environment documentation (Safety: 0 pts)
      No .env.example found. Agents may make incorrect assumptions about
      required environment variables.
      → Add .env.example documenting required vars (values can be blank).
@@ -135,19 +146,26 @@ Audit results have hierarchy: overall score → categories → individual blocke
 
   QUICK (< 30 min)
   ☐ Create AGENTS.md with agent operating rules      → Instructions +2
-  ☐ Create .env.example with placeholder values      → Safety Gates +1
+  ☐ Add repo-local skills under .agents/skills/      → Instructions +1
+  ☐ Create .env.example with placeholder values      → Safety +1
+
+  TOOL-SPECIFIC FIXES
+  ☐ Create CLAUDE.md for Claude Code startup rules   → Claude Code +1
+  ☐ Add Claude/Cursor skills for selected tools      → Instructions +1
 
   MEDIUM (1-2 hrs)
   ☐ Add a test directory with one passing test       → Feedback +2
-  ☐ Add architecture notes (ARCHITECTURE.md)         → Context +1
-
-  HEAVY (half day+)
-  ☐ Set up CI workflow (.github/workflows/)          → Feedback +1
+  ☐ Add a discoverable architecture guide            → Context +1
 
 ─────────────────────────────────────────────────────
 
   Run `agent-harness audit . --write-artifacts` to generate starter files.
 ```
+
+For single-tool audits, the Instructions category is intentionally conditional:
+- `AGENTS.md` remains the default primary instruction surface.
+- `CLAUDE.md` can satisfy the primary instructions check in a Claude-only audit, when the repo otherwise presents a single clear Claude-native instruction surface, or when the selected supported tools already have native skills coverage and the repo is using `CLAUDE.md` as the shared root surface.
+- Missing `.agents/skills` is not shown as a blocker when exactly one supported tool is selected and that tool already has native skills under `.claude/skills/` or `.cursor/skills/`.
 
 ### Layout decisions
 
@@ -155,6 +173,7 @@ Audit results have hierarchy: overall score → categories → individual blocke
 - Single line with the number, a visual bar, and a text label (READY / GOOD / NEEDS WORK / NOT READY)
 - Horizontal rule above and below — creates strong visual anchor without a box drawing library
 - Score bar uses block characters (████░░) which degrade to ASCII in plain text mode
+- A short rationale block explains that the audit only scores setup that directly helps agents understand the repo, make scoped changes, and verify work
 
 **Zone 2 — Category table:**
 - One line per category: name, bar, score, finding summary
@@ -344,19 +363,14 @@ Machine-readable output must be completely clean — no ANSI codes, no human-add
       {
         "id": "instructions",
         "label": "Instructions",
-        "score": 1.3,
+        "score": 4.0,
         "maxScore": 5,
         "checks": [
-          { "id": "has_agents_md",    "passed": false, "weight": 0.35, "label": "AGENTS.md present",       "failureNote": "No AGENTS.md found. This is the primary way to give agent-specific operating instructions." },
-          { "id": "has_claude_md",    "passed": false, "weight": 0.25, "label": "CLAUDE.md present",       "failureNote": "No CLAUDE.md found. Claude Code reads this for project-level constraints." },
-          { "id": "has_readme",       "passed": true,  "weight": 0.25, "label": "README present" },
-          { "id": "has_contributing", "passed": false, "weight": 0.15, "label": "CONTRIBUTING.md present", "failureNote": "No CONTRIBUTING.md found. Agents may not know the contribution model." }
+          { "id": "has_primary_instructions", "passed": true, "weight": 0.50, "label": "Primary instructions present" },
+          { "id": "has_readme",               "passed": true, "weight": 0.10, "label": "README present" },
+          { "id": "has_tool_skills",          "passed": true, "weight": 0.30, "label": "Tool skills present" }
         ],
-        "failingChecks": [
-          { "id": "has_agents_md",    "passed": false, "weight": 0.35, "label": "AGENTS.md present",       "failureNote": "No AGENTS.md found. This is the primary way to give agent-specific operating instructions." },
-          { "id": "has_claude_md",    "passed": false, "weight": 0.25, "label": "CLAUDE.md present",       "failureNote": "No CLAUDE.md found. Claude Code reads this for project-level constraints." },
-          { "id": "has_contributing", "passed": false, "weight": 0.15, "label": "CONTRIBUTING.md present", "failureNote": "No CONTRIBUTING.md found. Agents may not know the contribution model." }
-        ]
+        "failingChecks": []
       },
       {
         "id": "context",
@@ -364,13 +378,13 @@ Machine-readable output must be completely clean — no ANSI codes, no human-add
         "score": 2.0,
         "maxScore": 5,
         "checks": [
-          { "id": "has_architecture_docs", "passed": false, "weight": 0.35, "label": "Architecture docs exist",   "failureNote": "No ARCHITECTURE.md or docs/architecture.* found." },
+          { "id": "has_architecture_docs", "passed": false, "weight": 0.35, "label": "Architecture docs exist",   "failureNote": "No discoverable architecture guide found at the repo root or in docs/." },
           { "id": "has_docs_dir",          "passed": false, "weight": 0.25, "label": "docs/ directory exists",   "failureNote": "No docs/ directory found." },
           { "id": "has_tsconfig",          "passed": true,  "weight": 0.25, "label": "tsconfig.json present" },
           { "id": "has_env_example",       "passed": true,  "weight": 0.15, "label": ".env.example present" }
         ],
         "failingChecks": [
-          { "id": "has_architecture_docs", "passed": false, "weight": 0.35, "label": "Architecture docs exist",   "failureNote": "No ARCHITECTURE.md or docs/architecture.* found." },
+          { "id": "has_architecture_docs", "passed": false, "weight": 0.35, "label": "Architecture docs exist",   "failureNote": "No discoverable architecture guide found at the repo root or in docs/." },
           { "id": "has_docs_dir",          "passed": false, "weight": 0.25, "label": "docs/ directory exists",   "failureNote": "No docs/ directory found." }
         ]
       },
@@ -391,42 +405,38 @@ Machine-readable output must be completely clean — no ANSI codes, no human-add
       {
         "id": "feedback",
         "label": "Feedback",
-        "score": 1.3,
+        "score": 1.8,
         "maxScore": 5,
         "checks": [
           { "id": "has_test_script",  "passed": true,  "weight": 0.25, "label": "test script present" },
           { "id": "has_test_dir",     "passed": false, "weight": 0.30, "label": "test directory exists", "failureNote": "No tests/, test/, or __tests__/ directory found." },
-          { "id": "has_test_files",   "passed": false, "weight": 0.15, "label": "test files present",    "failureNote": "No *.test.* or *.spec.* files found." },
-          { "id": "has_ci_workflows", "passed": false, "weight": 0.30, "label": "CI workflows present",  "failureNote": "No .github/workflows/*.yml found." }
+          { "id": "has_test_files",   "passed": false, "weight": 0.15, "label": "test files present",    "failureNote": "No *.test.* or *.spec.* files found." }
         ],
         "failingChecks": [
           { "id": "has_test_dir",     "passed": false, "weight": 0.30, "label": "test directory exists", "failureNote": "No tests/, test/, or __tests__/ directory found." },
-          { "id": "has_test_files",   "passed": false, "weight": 0.15, "label": "test files present",    "failureNote": "No *.test.* or *.spec.* files found." },
-          { "id": "has_ci_workflows", "passed": false, "weight": 0.30, "label": "CI workflows present",  "failureNote": "No .github/workflows/*.yml found." }
+          { "id": "has_test_files",   "passed": false, "weight": 0.15, "label": "test files present",    "failureNote": "No *.test.* or *.spec.* files found." }
         ]
       },
       {
         "id": "safety",
-        "label": "Safety Gates",
+        "label": "Safety",
         "score": 2.0,
         "maxScore": 5,
         "checks": [
-          { "id": "has_env_example",       "passed": true,  "weight": 0.40, "label": "Environment vars documented" },
-          { "id": "has_contributing",      "passed": false, "weight": 0.30, "label": "Contribution process documented", "failureNote": "No CONTRIBUTING.md found." },
-          { "id": "has_architecture_docs", "passed": false, "weight": 0.30, "label": "Architecture guidance exists",    "failureNote": "No architecture documentation found." }
+          { "id": "has_env_example",       "passed": true,  "weight": 0.60, "label": "Environment vars documented" },
+          { "id": "has_architecture_docs", "passed": false, "weight": 0.40, "label": "Architecture guidance exists",    "failureNote": "No architecture documentation found." }
         ],
         "failingChecks": [
-          { "id": "has_contributing",      "passed": false, "weight": 0.30, "label": "Contribution process documented", "failureNote": "No CONTRIBUTING.md found." },
-          { "id": "has_architecture_docs", "passed": false, "weight": 0.30, "label": "Architecture guidance exists",    "failureNote": "No architecture documentation found." }
+          { "id": "has_architecture_docs", "passed": false, "weight": 0.40, "label": "Architecture guidance exists",    "failureNote": "No architecture documentation found." }
         ]
       }
     ],
     "topBlockers": [
       {
         "categoryId": "instructions",
-        "checkId": "has_agents_md",
-        "title": "No agent instruction files",
-        "why": "No AGENTS.md or CLAUDE.md found. Agents have no explicit constraints or operating rules.",
+        "checkId": "has_primary_instructions",
+        "title": "No primary instruction surface",
+        "why": "No AGENTS.md found. Agents have no explicit constraints or operating rules.",
         "likelyFailureMode": "Agent edits too broadly or makes wrong assumptions about project structure and conventions.",
         "effort": "quick"
       },
@@ -439,20 +449,18 @@ Machine-readable output must be completely clean — no ANSI codes, no human-add
         "effort": "medium"
       },
       {
-        "categoryId": "feedback",
-        "checkId": "has_ci_workflows",
-        "title": "No CI workflows",
-        "why": "No .github/workflows/*.yml found. Changes are never automatically validated.",
-        "likelyFailureMode": "Regressions merge undetected. No automated gate exists to catch agent mistakes.",
-        "effort": "medium"
+        "categoryId": "context",
+        "checkId": "has_architecture_docs",
+        "title": "No architecture documentation",
+        "why": "No discoverable architecture guide was found at the repo root or in docs/. Agents cannot build a stable mental model of the codebase structure from documentation.",
+        "likelyFailureMode": "Agents make structural changes with weak understanding of boundaries, ownership, and data flow.",
+        "effort": "heavy"
       }
     ],
     "fixPlan": [
-      { "categoryId": "instructions", "checkId": "has_agents_md",         "action": "Create AGENTS.md with agent operating rules",    "effort": "quick",  "priority": 1 },
-      { "categoryId": "instructions", "checkId": "has_claude_md",         "action": "Create CLAUDE.md with project-level constraints", "effort": "quick",  "priority": 2 },
+      { "categoryId": "instructions", "checkId": "has_primary_instructions", "action": "Create AGENTS.md with agent operating rules", "effort": "quick",  "priority": 1 },
       { "categoryId": "feedback",     "checkId": "has_test_dir",          "action": "Add a test directory with one passing test",      "effort": "medium", "priority": 3 },
-      { "categoryId": "context",      "checkId": "has_architecture_docs", "action": "Add ARCHITECTURE.md or docs/architecture.md",     "effort": "heavy",  "priority": 4 },
-      { "categoryId": "feedback",     "checkId": "has_ci_workflows",      "action": "Set up CI workflow (.github/workflows/)",         "effort": "medium", "priority": 5 }
+      { "categoryId": "context",      "checkId": "has_architecture_docs", "action": "Add a discoverable architecture guide at the repo root or in docs/",     "effort": "heavy",  "priority": 4 }
     ]
   },
   "artifacts": [
@@ -500,9 +508,9 @@ When `--write-artifacts` runs, the developer needs to know exactly what was crea
   ✓ Created: validation-checklist.generated.md
     Pre-merge validation checklist — adapt to your workflow
 
-  ✗ Skipped: architecture-outline.generated.md
-    Requires --tool flag for tool-specific guidance.
-    Run: agent-harness audit . --tool claude-code --write-artifacts
+  ✗ Skipped: CLAUDE.generated.md
+    Run with --tools claude-code to include Claude-specific guidance.
+    Run: agent-harness audit . --tools claude-code --write-artifacts
 
 ─────────────────────────────────────────────────────
   Next steps
@@ -557,7 +565,7 @@ No silent overwrites. Ever.
 
 | Situation | Wrong tone | Right tone |
 |-----------|-----------|------------|
-| No AGENTS.md | "Your instructions category needs improvement" | "No AGENTS.md or CLAUDE.md found" |
+| No AGENTS.md | "Your instructions category needs improvement" | "No AGENTS.md found" |
 | High score | "Congratulations! Your project is agent-ready! 🚀" | "This project is well-configured for AI coding agent use." |
 | Path error | "Oops! That path doesn't seem to exist 😅" | "Error: Path not found — /path/to/dir" |
 | After artifact write | "Done! We've created some helpful starter files for you!" | "Created: AGENTS.generated.md — review and rename to AGENTS.md" |
@@ -584,7 +592,6 @@ Auditing: /Users/alice/projects/my-app
   Reading package.json...        done
   Checking docs and instructions...  done
   Checking test signals...       done
-  Checking workflow configs...   done
   Scoring (heuristic)...         done
 
   Running deep analysis via claude-code
@@ -669,7 +676,7 @@ Each finding in Zones 2–3 carries a source marker:
   Context         ███░░  3 / 5   README exists, no architecture docs
   Tooling         █████  5 / 5   package.json ✓  lockfile ✓  scripts ✓
   Feedback        ██░░░  2 / 5   No test directory detected
-  Safety Gates    ███░░  3 / 5   .env.example present — missing key vars ◆
+  Safety          ███░░  4 / 5   .env.example present — missing key vars ◆
 ```
 
 **Zone 3 AI-sourced blocker:**
@@ -817,7 +824,8 @@ All flags for `agent-harness audit` and `agent-harness fix`:
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--tool <name>` | enum | — | Specify the AI coding tool being audited: `claude-code \| cursor \| copilot \| codex \| other`. Adjusts scoring weights for tool-specific checks (e.g. `claude-code` boosts `has_claude_md` weight) |
+| `--tools <list\|all>` | enum | all | Specify the target tools being audited: `claude-code \| cursor \| copilot \| codex \| other \| all`. Core scoring stays tool-neutral, but Instructions considers the selected tools when checking `CLAUDE.md`, `.agents/skills/`, `.claude/skills/`, and `.cursor/skills/` |
+| `--tool <name>` | enum | — | Deprecated alias for `--tools <name>` |
 | `--failure-mode <text>` | string | — | Describe the failure mode context (e.g. `"regressions after edits"`). Stored as metadata; included in JSON output and text report header. No effect on scoring in V1 |
 | `--safety-level <level>` | enum | — | Set the safety level context: `low \| medium \| high`. Stored as metadata; included in JSON output and text report header. No effect on scoring in V1 |
 | `--deep` | boolean | false | Delegate audit to a coding agent for AI-augmented analysis |
@@ -850,7 +858,7 @@ Commands:
   fix <path>      Interactively apply AI-generated fixes to a project
 
 Flags for audit:
-  --tool <name>   AI tool context: claude-code | cursor | copilot | codex | other
+  --tools <list|all>  Target tools: claude-code | cursor | copilot | codex | other | all
   --failure-mode <text>  Failure mode context (metadata only)
   --safety-level <level>  Safety context: low | medium | high (metadata only)
   --deep          AI-augmented audit via coding agent (slower, more specific)
@@ -909,9 +917,9 @@ The base schema from Section 5 is extended for `--deep` runs:
     "findings": [
       {
         "categoryId": "instructions",
-        "checkId": "has_agents_md",
+        "checkId": "has_primary_instructions",
         "passed": false,
-        "label": "AGENTS.md present",
+        "label": "Primary instructions present",
         "evidence": "AGENTS.md contains 2 sentences with no tech stack or workflow rules.",
         "failureNote": "AGENTS.md exists but lacks project-specific constraints."
       }
@@ -970,8 +978,8 @@ AI-sourced findings follow the same evidence-first, imperative style as heuristi
 |-----------|-------|-------|
 | Weak AGENTS.md | "Your agent instructions could be improved" | "AGENTS.md lacks project-specific constraints — 2 sentences with no rules" |
 | Missing test patterns | "Test coverage seems insufficient" | "No `*.test.*` files found in src/. Agent changes cannot be validated locally. Confidence: high" |
-| Ambiguous architecture | "Architecture docs might be needed" | "No ARCHITECTURE.md found. Large agent tasks lack scope guidance. Confidence: medium" |
-| Low-confidence inference | "This repo probably needs CI" | "CI workflows absent. Agent changes are unvalidated on merge. Confidence: speculative — only top-level dirs scanned" |
+| Ambiguous architecture | "Architecture docs might be needed" | "No discoverable architecture guide found at the repo root or in docs/. Large agent tasks lack scope guidance. Confidence: medium" |
+| Low-confidence inference | "This repo probably needs more validation" | "No `*.test.*` files found. Agent changes are weakly validated locally. Confidence: speculative — only top-level test locations scanned" |
 
 ---
 

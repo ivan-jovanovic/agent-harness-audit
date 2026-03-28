@@ -5,7 +5,7 @@ Status: Approved
 Author: Founding Engineer
 Date: 2026-03-19
 
-> **v2.0 changes:** Added hybrid audit model — `src/agents/` module, `--deep` flag, `--agent` flag, `fix` command, `AgentAdapter` interface, `ClaudeCodeAdapter` / `CodexAdapter` implementations, `FixEngine`, token cost display, and non-determinism handling. Heuristic path is unchanged.
+> **v2.0 changes:** Added a tool-neutral core audit with tool-specific overlays, `--tools` selection, `--deep` flag, `--agent` flag, `fix` command, `AgentAdapter` interface, `ClaudeCodeAdapter` / `CodexAdapter` implementations, `FixEngine`, token cost display, and non-determinism handling. Heuristic path is unchanged.
 
 ---
 
@@ -105,24 +105,25 @@ fixtures/
 ```typescript
 // Input
 
-export type AgentTool = "claude-code" | "cursor" | "copilot" | "codex" | "other";
+export type TargetTool = "claude-code" | "codex" | "cursor" | "copilot" | "other";
 export type SafetyLevel = "low" | "medium" | "high";
 export type AgentName = "claude-code" | "codex";  // supported deep-audit agents
 
 export interface AuditInput {
-  path: string;            // absolute resolved path
-  tool: AgentTool;         // default: "other"
-  failureMode?: string;    // optional user-supplied context
-  safetyLevel: SafetyLevel; // default: "medium"
-  jsonMode: boolean;       // --json flag
-  writeArtifacts: boolean; // --write-artifacts flag
-  outputFile?: string;     // --output flag
-  deep: boolean;           // --deep flag: route through agent adapter
-  agentName?: AgentName;   // --agent flag: explicit agent selection
-  tokens: boolean;         // --tokens flag: display token counts instead of dollar cost
-  verbose: boolean;        // --verbose flag: show full file previews in fix mode (no truncation)
-  debug: boolean;          // --debug flag: print stack traces and verbose error info to stderr
-  noColor: boolean;        // --no-color flag: disable ANSI color codes
+  path: string;              // absolute resolved path
+  toolsRequested: "all" | TargetTool[];  // default: "all"
+  toolsResolved: TargetTool[];           // normalized target tools used for overlays
+  failureMode?: string;      // optional user-supplied context
+  safetyLevel: SafetyLevel;  // default: "medium"
+  jsonMode: boolean;         // --json flag
+  writeArtifacts: boolean;   // --write-artifacts flag
+  outputFile?: string;       // --output flag
+  deep: boolean;             // --deep flag: route through agent adapter
+  agentName?: AgentName;     // --agent flag: explicit agent selection
+  tokens: boolean;           // --tokens flag: display token counts instead of dollar cost
+  verbose: boolean;          // --verbose flag: show full file previews in fix mode (no truncation)
+  debug: boolean;            // --debug flag: print stack traces and verbose error info to stderr
+  noColor: boolean;          // --no-color flag: disable ANSI color codes
 }
 
 // Evidence
@@ -131,8 +132,7 @@ export interface FileSignals {
   hasAgentsMd: boolean;
   hasCLAUDEMd: boolean;
   hasReadme: boolean;
-  hasContributing: boolean;
-  hasArchitectureDocs: boolean;       // ARCHITECTURE.md or docs/architecture.*
+  hasArchitectureDocs: boolean;       // discoverable architecture guide at repo root or under docs/
   hasEnvExample: boolean;
   hasDocsDir: boolean;
 }
@@ -178,6 +178,19 @@ export interface RepoEvidence {
   context: ContextSignals;
 }
 
+// Tool overlay
+
+export type ToolReadinessStatus = "ready" | "needs-work" | "not-scored";
+
+export interface ToolReadinessResult {
+  tool: TargetTool;
+  status: ToolReadinessStatus;
+  score?: number;          // 0–5 for scored overlays
+  maxScore?: 5;
+  note?: string;           // used for not-scored tool overlays
+  checks?: CheckResult[];
+}
+
 // Agent Adapter
 
 export interface AgentDiscoveryResult {
@@ -210,7 +223,7 @@ export interface DeepAuditResult {
 export type CategoryId = "instructions" | "context" | "tooling" | "feedback" | "safety";
 
 export interface CheckResult {
-  id: string;             // e.g. "has_agents_md"
+  id: string;             // e.g. "has_primary_instructions"
   passed: boolean;
   weight: number;         // contribution to category score
   label: string;          // human-readable check name
@@ -249,6 +262,8 @@ export interface ScoringResult {
   categoryScores: CategoryScore[];
   topBlockers: Blocker[]; // top 3, ranked by impact
   fixPlan: FixItem[];     // full prioritized list
+  toolReadiness: ToolReadinessResult[];
+  toolSpecificFixes: FixItem[];
 }
 
 // Fix Command
@@ -275,7 +290,7 @@ export interface FixResult {
 // Artifacts
 
 export interface ArtifactResult {
-  id: "agents" | "validation-checklist" | "architecture-outline";
+  id: "agents" | "claude" | "validation-checklist" | "architecture-outline";
   filename: string;        // e.g. "AGENTS.generated.md"
   targetPath: string;      // absolute path where it would be written
   skipped: boolean;        // true if file already exists
@@ -286,7 +301,7 @@ export interface ArtifactResult {
 // Report
 
 export interface AuditReport {
-  version: "1";            // schema version, always literal "1" for V1
+  version: "2";            // schema version, always literal "2" for V2
   generatedAt: string;     // ISO 8601 UTC
   input: AuditInput;
   evidence: RepoEvidence;
@@ -309,6 +324,8 @@ New flags handled by `parseArgs`:
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--tools <list\|all>` | string | `all` | Target tools to evaluate: `claude-code`, `codex`, `cursor`, `copilot`, `other`, or `all` |
+| `--tool <name>` | string | — | Deprecated alias for `--tools <name>` |
 | `--deep` | boolean | `false` | Route audit through agent adapter instead of heuristics only |
 | `--agent <name>` | string | auto | Explicit agent selection: `claude-code` or `codex` |
 | `--tokens` | boolean | `false` | Display token counts instead of dollar cost (used with `--deep`) |
@@ -479,7 +496,10 @@ When `input.deep === true` and `DeepAuditFinding` values are merged into evidenc
 **`src/scoring/categories/` — interface unchanged:**
 
 ```typescript
-export function scoreInstructions(evidence: RepoEvidence): CategoryScore
+export function scoreInstructions(
+  evidence: RepoEvidence,
+  input?: Pick<AuditInput, "toolsRequested" | "toolsResolved">
+): CategoryScore
 export function scoreContext(evidence: RepoEvidence): CategoryScore
 export function scoreTooling(evidence: RepoEvidence): CategoryScore
 export function scoreFeedback(evidence: RepoEvidence): CategoryScore
@@ -606,22 +626,36 @@ Always returns populated `ArtifactResult[]` with `content` set, regardless of `w
 
 ## 3. Scoring Rubric Implementation
 
-### 3.1 Instructions (weight: 0.25)
+### 3.1 Instructions (weight: 0.20)
 
 | Check ID | Label | Weight | Pass Condition |
 |---|---|---|---|
-| `has_agents_md` | AGENTS.md present | 0.35 | `files.hasAgentsMd` |
-| `has_claude_md` | CLAUDE.md present | 0.25 | `files.hasCLAUDEMd` |
-| `has_readme` | README present | 0.25 | `files.hasReadme` |
-| `has_contributing` | CONTRIBUTING.md present | 0.15 | `files.hasContributing` |
+| `has_primary_instructions` | primary instructions present | 0.50 | `files.hasAgentsMd`, or `files.hasCLAUDEMd` when the repo is being audited as Claude-only, clearly has a single Claude-native instruction surface, or already has native skills coverage for all selected supported tools |
+| `has_readme` | README present | 0.10 | `files.hasReadme` |
+| `has_generic_skills` | generic skills present | 0.10 | `.agents/skills/**/SKILL.md` exists |
+| `has_tool_skills` | tool skills present | 0.30 | `.claude/skills/**/SKILL.md` and/or `.cursor/skills/**/SKILL.md` exist for all selected supported tools |
 
 Score: `sum(passing check weights) / sum(all weights) * 5`
 
 Failure notes:
-- `has_agents_md`: "No AGENTS.md found. This is the primary way to give agent-specific operating instructions."
-- `has_claude_md`: "No CLAUDE.md found. Claude Code reads this for project-level constraints."
+- `has_primary_instructions`: "No AGENTS.md found at project root — the agent starts every session with no project-specific operating rules."
+  For Claude-native repos: "No AGENTS.md or CLAUDE.md found at project root — Claude-based workflows still need a primary instruction surface."
 - `has_readme`: "No README found. Agents use this to orient before exploring the codebase."
-- `has_contributing`: "No CONTRIBUTING.md found. Agents may not know the contribution model."
+- `has_generic_skills`: "No repo-local skills found under .agents/skills/**/SKILL.md."
+- `has_tool_skills`: "No supported tool skills found under .claude/skills/**/SKILL.md or .cursor/skills/**/SKILL.md for the selected tools."
+
+Notes:
+- Skills checks only count repo-local paths. Empty skill directories do not pass.
+- A repo is treated as Claude-native when Claude is the only detected native tool surface in evidence (`CLAUDE.md` / `.claude/skills`) and no competing supported tool surface is present.
+- `CLAUDE.md` also satisfies the primary check when every selected supported tool already has native skills coverage in the repo. This allows mirrored Claude/Cursor setups to keep a single root instruction surface.
+- `has_generic_skills` is omitted when exactly one supported tool is selected and that tool's native skills are present.
+- `has_tool_skills` is omitted when no selected supported tool has a native skills path in this version.
+
+### 3.1A Supported Skills Paths
+
+- Generic reusable skills: `.agents/skills/**/SKILL.md`
+- Claude-specific skills: `.claude/skills/**/SKILL.md`
+- Cursor-specific skills: `.cursor/skills/**/SKILL.md`
 
 ### 3.2 Context (weight: 0.20)
 
@@ -632,7 +666,7 @@ Failure notes:
 | `has_tsconfig` | tsconfig.json present | 0.25 | `context.hasTsConfig` |
 | `has_env_example` | .env.example present | 0.15 | `files.hasEnvExample` |
 
-### 3.3 Tooling (weight: 0.20)
+### 3.3 Tooling (weight: 0.25)
 
 | Check ID | Label | Weight | Pass Condition |
 |---|---|---|---|
@@ -649,17 +683,13 @@ Failure notes:
 | `has_test_script` | test script present | 0.25 | `packages.scripts.hasTest` |
 | `has_test_dir` | test directory exists | 0.30 | `tests.hasTestDir` |
 | `has_test_files` | test files present | 0.15 | `tests.hasTestFiles` |
-| `has_ci_workflows` | CI workflows present | 0.30 | `workflows.hasCIWorkflows` |
 
 ### 3.5 Safety (weight: 0.10)
 
 | Check ID | Label | Weight | Pass Condition |
 |---|---|---|---|
-| `has_env_example` | Environment vars documented | 0.40 | `files.hasEnvExample` |
-| `has_contributing` | Contribution process documented | 0.30 | `files.hasContributing` |
-| `has_architecture_docs` | Architecture guidance exists | 0.30 | `files.hasArchitectureDocs` |
-
-Note: `has_env_example` and `has_contributing` appear in multiple categories intentionally. They address different failure modes in each context.
+| `has_env_example` | Environment vars documented | 0.60 | `files.hasEnvExample` |
+| `has_architecture_docs` | Architecture guidance exists | 0.40 | `files.hasArchitectureDocs` |
 
 ### 3.6 Blocker Selection
 
@@ -675,10 +705,10 @@ Map all failing checks to `FixItem` with effort estimates:
 
 | Check | Effort |
 |---|---|
-| `has_agents_md` | quick (15 min) |
-| `has_claude_md` | quick (10 min) |
+| `has_primary_instructions` | quick (15 min) |
 | `has_readme` | medium (1–2 hrs) |
-| `has_contributing` | medium (30 min) |
+| `has_generic_skills` | medium (varies) |
+| `has_tool_skills` | medium (varies) |
 | `has_architecture_docs` | heavy (2–4 hrs) |
 | `has_docs_dir` | medium (varies) |
 | `has_tsconfig` | quick (5 min) |
@@ -691,21 +721,21 @@ Map all failing checks to `FixItem` with effort estimates:
 | `has_test_script` | medium (add script + config) |
 | `has_test_dir` | medium (add test dir + first test) |
 | `has_test_files` | medium (add test files) |
-| `has_ci_workflows` | medium (GitHub Actions setup) |
 
 ---
 
 ## 4. JSON Output Schema
 
-The JSON output IS the `AuditReport` type serialized. This section documents the stable V1 schema.
+The JSON output IS the `AuditReport` type serialized. This section documents the stable V2 schema.
 
 ```json
 {
-  "version": "1",
+  "version": "2",
   "generatedAt": "2026-03-18T22:00:00.000Z",
   "input": {
     "path": "/abs/path/to/project",
-    "tool": "claude-code",
+    "toolsRequested": "all",
+    "toolsResolved": ["claude-code", "codex", "cursor", "copilot", "other"],
     "failureMode": "regressions after edits",
     "safetyLevel": "medium",
     "jsonMode": true,
@@ -718,7 +748,6 @@ The JSON output IS the `AuditReport` type serialized. This section documents the
       "hasAgentsMd": false,
       "hasCLAUDEMd": false,
       "hasReadme": true,
-      "hasContributing": false,
       "hasArchitectureDocs": false,
       "hasEnvExample": true,
       "hasDocsDir": false
@@ -765,17 +794,40 @@ The JSON output IS the `AuditReport` type serialized. This section documents the
         "failingChecks": [...]
       }
     ],
+    "toolReadiness": [
+      {
+        "tool": "claude-code",
+        "status": "needs-work",
+        "score": 0,
+        "maxScore": 5,
+        "checks": [
+          {
+            "id": "has_claude_md",
+            "passed": false,
+            "weight": 1,
+            "label": "CLAUDE.md present",
+            "failureNote": "No CLAUDE.md found. Claude Code reads this for project-level constraints."
+          }
+        ]
+      },
+      {
+        "tool": "codex",
+        "status": "not-scored",
+        "note": "No tool-specific repo-level checks in v2"
+      }
+    ],
     "topBlockers": [
       {
         "categoryId": "instructions",
-        "checkId": "has_agents_md",
-        "title": "No agent instructions file found",
-        "why": "Without AGENTS.md or CLAUDE.md, the agent starts every session with no project-specific context.",
+        "checkId": "has_primary_instructions",
+        "title": "No primary instruction surface",
+        "why": "Without AGENTS.md, the agent starts every session with no project-specific context.",
         "likelyFailureMode": "Agent makes incorrect assumptions about structure, scope, or constraints.",
         "effort": "quick"
       }
     ],
-    "fixPlan": [...]
+    "fixPlan": [...],
+    "toolSpecificFixes": [...]
   },
   "artifacts": [
     {
@@ -785,6 +837,14 @@ The JSON output IS the `AuditReport` type serialized. This section documents the
       "skipped": false,
       "written": false,
       "content": "# Agent Instructions\n..."
+    },
+    {
+      "id": "claude",
+      "filename": "CLAUDE.generated.md",
+      "targetPath": "/abs/path/to/project/CLAUDE.generated.md",
+      "skipped": false,
+      "written": false,
+      "content": "# Claude Code Instructions\n..."
     }
   ],
   "deepAudit": {
@@ -792,9 +852,9 @@ The JSON output IS the `AuditReport` type serialized. This section documents the
     "findings": [
       {
         "categoryId": "instructions",
-        "checkId": "has_agents_md",
+        "checkId": "has_primary_instructions",
         "passed": false,
-        "label": "AGENTS.md present",
+        "label": "Primary instructions present",
         "evidence": "No AGENTS.md or CLAUDE.md found. The repo has a README that references Claude Code but provides no operating constraints for the agent."
       }
     ],
@@ -807,14 +867,15 @@ The JSON output IS the `AuditReport` type serialized. This section documents the
 }
 ```
 
-**Schema stability guarantees for V1:**
-- `version` field will be `"1"` for all V1 releases. Consumers MUST check this field.
-- Top-level keys (`version`, `generatedAt`, `input`, `evidence`, `scoring`, `artifacts`) will not be removed in V1.
+**Schema stability guarantees for V2:**
+- `version` field will be `"2"` for all V2 releases. Consumers MUST check this field.
+- Top-level keys (`version`, `generatedAt`, `input`, `evidence`, `scoring`, `artifacts`) will not be removed in V2.
 - `deepAudit` is optional — absent when `input.deep === false`.
 - `categoryScores` array order is stable: always `["instructions", "context", "tooling", "feedback", "safety"]`.
+- `toolReadiness` order is stable: the resolved target tools are emitted in the selected order, with non-scored tools collapsed to `not-scored`.
 - `overallScore` is always an integer 0–100.
 - `categoryScores[].score` is always a number with at most one decimal place, 0–5.
-- Breaking schema changes require a `version` bump to `"2"`.
+- Breaking schema changes require a `version` bump to `"3"`.
 
 ---
 
@@ -831,6 +892,7 @@ Available tokens: `{{PROJECT_NAME}}`, `{{DETECTED_LANGUAGE}}`, `{{DETECTED_FRAME
 | ID | Output Filename | Template |
 |---|---|---|
 | `agents` | `AGENTS.generated.md` | `agents.md.template` |
+| `claude` | `CLAUDE.generated.md` | `claude.md.template` |
 | `validation-checklist` | `validation-checklist.generated.md` | `validation-checklist.md.template` |
 | `architecture-outline` | `architecture-outline.generated.md` | `architecture-outline.md.template` |
 
@@ -838,7 +900,7 @@ Available tokens: `{{PROJECT_NAME}}`, `{{DETECTED_LANGUAGE}}`, `{{DETECTED_FRAME
 
 1. Before writing any file, check if it exists using `fs.existsSync(targetPath)`.
 2. If it exists, set `skipped: true, written: false`. Log a warning to stderr.
-3. The guard applies to both the generated filename (e.g. `AGENTS.generated.md`) **and** the canonical filename (e.g. `AGENTS.md`). If `AGENTS.md` exists, do NOT write `AGENTS.generated.md` either — the user has a live instructions file.
+3. The guard applies to both the generated filename (e.g. `AGENTS.generated.md`, `CLAUDE.generated.md`) **and** the canonical filename (e.g. `AGENTS.md`, `CLAUDE.md`). If the canonical file exists, do NOT write the generated counterpart either — the user has a live instructions file.
 4. There is no `--force` flag in V1. Force-overwrite is explicitly out of scope.
 
 ### 5.4 Dry-Run Preview
@@ -849,11 +911,11 @@ When `--json` is set without `--write-artifacts`, the `artifacts` array in the J
 
 ## 6. Ambiguities Requiring Product Decisions
 
-### A. `--tool` flag behavior — does it change scoring weights?
+### A. `--tools` flag behavior — how are tool overlays selected?
 
-**Board decision (2026-03-18): YES — tool flag adjusts scoring weights.**
+**Board decision (2026-03-23): `--tools` selects overlays, not core scoring.**
 
-Implementation: when `tool=claude-code`, boost `has_claude_md` check weight in the Instructions category from 0.25 to 0.40 (redistribute from `has_contributing`). When `tool=cursor`, no weight changes in V1 (cursor-specific checks are V2 scope). Other tools: no weight changes.
+Implementation: the core score is tool-neutral. When `claude-code` is included in `toolsResolved`, emit a Claude-specific overlay check for `CLAUDE.md`. Other tools are listed in the report as `not-scored` in V2. `--tool` remains a deprecated alias for one release.
 
 ### B. Minimum score threshold — does the CLI exit non-zero on low scores?
 
@@ -993,7 +1055,7 @@ Build order: Tasks 1–7 can be completed as the original heuristic MVP. Tasks 8
 ## 8. Pre-Implementation Checklist
 
 - [x] Board approves this spec (2026-03-18, updated 2026-03-19)
-- [x] Decision on `--tool` weight adjustment behavior — YES, adjust weights (Section 6A)
+- [x] Decision on `--tools` overlay behavior — YES, tool overlays are separate from core scoring (Section 6A)
 - [x] Decision on exit code policy — exit 0 for all audits (Section 6B)
 - [x] Decision on `--safety-level` behavior — metadata only in V1 (Section 6D)
 - [x] Template content — engineering judgment, see Section 9 (Section 6F)
