@@ -1,0 +1,15 @@
+{
+  "name": "autonomous-fixture",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "vite",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "dependency-cruiser": "^15.0.0",
+    "pino": "^9.0.0"
+  }
+}

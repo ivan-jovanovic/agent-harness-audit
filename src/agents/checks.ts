@@ -24,6 +24,13 @@ export const DEEP_CHECK_METADATA: Record<string, { categoryId: CategoryId; label
   has_test_dir: { categoryId: "feedback", label: "test directory exists" },
   has_test_files: { categoryId: "feedback", label: "test files present" },
   has_e2e_or_smoke_tests: { categoryId: "feedback", label: "e2e or smoke tests present" },
+  has_execution_plans: { categoryId: "context", label: "Execution plans present" },
+  has_short_navigational_instructions: {
+    categoryId: "instructions",
+    label: "Short navigational instructions present",
+  },
+  has_observability_signals: { categoryId: "safety", label: "Observability signals present" },
+  has_quality_or_debt_tracking: { categoryId: "safety", label: "Quality or debt tracking present" },
 };
 
 export const DEEP_CHECK_IDS = Object.keys(DEEP_CHECK_METADATA);

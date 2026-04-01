@@ -1,4 +1,5 @@
 import type { AuditReport, CategoryScore, Blocker, FixItem, ToolReadiness, ToolSpecificFixItem } from "../types.js";
+import { capStagedFixesForText } from "../scoring/levels.js";
 
 // ── ANSI helpers ──────────────────────────────────────────────────────────────
 
@@ -108,6 +109,10 @@ const CHECK_SHORT_LABEL: Record<string, string> = {
   has_e2e_or_smoke_tests: "e2e or smoke tests",
   has_ci_pipeline: "CI pipeline",
   has_ci_validation: "CI validation",
+  has_execution_plans: "execution plans",
+  has_short_navigational_instructions: "short navigational instructions",
+  has_observability_signals: "observability signals",
+  has_quality_or_debt_tracking: "quality/debt tracking",
 };
 
 function truncate(s: string, max: number): string {
@@ -209,6 +214,117 @@ function renderAuditRationale(out: (s: string) => void): void {
   out("");
 }
 
+function fallbackAction(checkId: string): string {
+  return `Address ${checkId} to improve agent readiness.`;
+}
+
+function renderStagedBucket(
+  title: string,
+  fullCheckIds: string[],
+  visibleCheckIds: string[],
+  fixPlanByCheckId: Map<string, FixItem>,
+  out: (s: string) => void,
+  showOverflow = false,
+): void {
+  out(`  ${bold(title)}`);
+  if (visibleCheckIds.length === 0) {
+    out("  - none");
+    out("");
+    return;
+  }
+
+  for (const checkId of visibleCheckIds) {
+    const fix = fixPlanByCheckId.get(checkId);
+    const label = CHECK_SHORT_LABEL[checkId] ?? checkId;
+    const action = fix?.action ?? fallbackAction(checkId);
+    out(`  - ${label}: ${action}`);
+  }
+
+  if (showOverflow && fullCheckIds.length > visibleCheckIds.length) {
+    out(`  +${fullCheckIds.length - visibleCheckIds.length} more`);
+  }
+  out("");
+}
+
+function renderLevelSummary(report: AuditReport, out: (s: string) => void): void {
+  if (!report.level) {
+    return;
+  }
+
+  const level = report.level;
+  const stagedForText = capStagedFixesForText(level.stagedFixes, level.id);
+  const fixPlanByCheckId = new Map(report.scoring.fixPlan.map((item) => [item.checkId, item]));
+
+  out(rule());
+  out(`  ${bold(`Readiness Level: L${level.id} ${level.label}`)}`);
+  out(rule());
+  out("");
+  if (level.nextLevelId) {
+    out(`  Next target: Level ${level.nextLevelId}`);
+  }
+  if (level.failedHardGates.length > 0) {
+    const blocking = level.failedHardGates.map((checkId) => CHECK_SHORT_LABEL[checkId] ?? checkId).join(", ");
+    out(`  Blocking hard gates: ${blocking}`);
+  } else {
+    out("  Blocking hard gates: none");
+  }
+  out("");
+
+  renderStagedBucket(
+    "Now",
+    level.stagedFixes.now,
+    stagedForText.now,
+    fixPlanByCheckId,
+    out,
+    true,
+  );
+  if (level.nextLevelId) {
+    renderStagedBucket("Next", level.stagedFixes.next, stagedForText.next, fixPlanByCheckId, out);
+    renderStagedBucket("Later", level.stagedFixes.later, level.stagedFixes.later, fixPlanByCheckId, out);
+    return;
+  }
+  renderStagedBucket(
+    "Optional improvements",
+    level.stagedFixes.later,
+    level.stagedFixes.later,
+    fixPlanByCheckId,
+    out,
+  );
+}
+
+function renderDeepHighlights(report: AuditReport, out: (s: string) => void): void {
+  const deep = report.deepAudit;
+  if (!deep) {
+    return;
+  }
+
+  const sections: Array<{ title: string; items: string[] | undefined }> = [
+    { title: "Strengths", items: deep.strengths },
+    { title: "Risks", items: deep.risks },
+    { title: "Autonomy Blockers", items: deep.autonomyBlockers },
+  ];
+  const visibleSections = sections.filter(
+    (section): section is { title: string; items: string[] } => Array.isArray(section.items) && section.items.length > 0,
+  );
+
+  if (visibleSections.length === 0) {
+    return;
+  }
+
+  out(rule());
+  out(`  ${bold("Deep Audit Highlights")}`);
+  out(rule());
+  out("");
+
+  for (const section of visibleSections) {
+    out(`  ${bold(section.title)}`);
+    for (const item of section.items) {
+      out(`  - ${item}`);
+    }
+    out("");
+  }
+}
+
 // ── Main reporter ─────────────────────────────────────────────────────────────
 
 export function reportText(report: AuditReport): void {
@@ -244,6 +360,7 @@ export function reportText(report: AuditReport): void {
   out("");
 
   renderAuditRationale(out);
+  renderDeepHighlights(report, out);
 
   // ── Zone 2: Category table ────────────────────────────────────────────────
   const CAT_LABEL_WIDTH = 14;
@@ -257,6 +374,7 @@ export function reportText(report: AuditReport): void {
   out("");
 
   renderToolReadiness(toolReadiness, out);
+  renderLevelSummary(report, out);
 
   // Happy path: no blockers or tool-specific fixes
   if (topBlockers.length === 0 && toolSpecificFixes.length === 0) {

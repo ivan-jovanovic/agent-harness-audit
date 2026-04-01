@@ -23,6 +23,7 @@ describe("parsePackageSignals", () => {
     it("no scripts", async () => {
       const result = await parsePackageSignals(join(fixturesDir, "minimal"));
       expect(result.hasArchitectureLints).toBe(false);
+      expect(result.observabilityDependencies).toEqual([]);
       expect(result.scripts.hasLocalDevBootPath).toBe(false);
       expect(result.scripts.hasLint).toBe(false);
       expect(result.scripts.hasTypecheck).toBe(false);
@@ -91,6 +92,7 @@ describe("parsePackageSignals", () => {
       expect(result.hasPackageJson).toBe(false);
       expect(result.hasLockfile).toBe(false);
       expect(result.hasArchitectureLints).toBe(false);
+      expect(result.observabilityDependencies).toEqual([]);
       expect(result.scripts.hasLocalDevBootPath).toBe(false);
       expect(result.scripts.hasTest).toBe(false);
     });
@@ -105,6 +107,83 @@ describe("parsePackageSignals", () => {
 
         const result = await parsePackageSignals(dir);
         expect(result.hasArchitectureLints).toBe(true);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("observability dependency detection", () => {
+    it("detects known observability dependencies in package.json", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "harness-observability-deps-"));
+      try {
+        writeFileSync(
+          join(dir, "package.json"),
+          JSON.stringify(
+            {
+              name: "observability-deps",
+              dependencies: {
+                pino: "^9.0.0",
+                "@sentry/node": "^8.0.0",
+              },
+              devDependencies: {
+                "@opentelemetry/api": "^1.0.0",
+              },
+            },
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+
+        const result = await parsePackageSignals(dir);
+        expect(result.observabilityDependencies).toEqual([
+          "@opentelemetry/api",
+          "@sentry/node",
+          "pino",
+        ]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("aggregates observability dependencies across discovered package roots", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "harness-observability-mono-"));
+      try {
+        mkdirSync(join(dir, "backend"), { recursive: true });
+        mkdirSync(join(dir, "frontend"), { recursive: true });
+
+        writeFileSync(
+          join(dir, "backend", "package.json"),
+          JSON.stringify(
+            {
+              name: "backend",
+              dependencies: {
+                winston: "^3.0.0",
+              },
+            },
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+        writeFileSync(
+          join(dir, "frontend", "package.json"),
+          JSON.stringify(
+            {
+              name: "frontend",
+              devDependencies: {
+                "prom-client": "^15.0.0",
+              },
+            },
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+
+        const result = await collectPackageSignals(dir);
+        expect(result.observabilityDependencies).toEqual(["prom-client", "winston"]);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -159,6 +238,51 @@ describe("parsePackageSignals", () => {
         expect(result.scripts.hasLocalDevBootPath).toBe(true);
         expect(result.scripts.hasLint).toBe(true);
         expect(result.scripts.hasTest).toBe(true);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("aggregates observability dependencies across discovered manifests", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "harness-mono-observability-"));
+      try {
+        mkdirSync(join(dir, "apps", "web"), { recursive: true });
+        mkdirSync(join(dir, "services", "api"), { recursive: true });
+
+        writeFileSync(
+          join(dir, "apps", "web", "package.json"),
+          JSON.stringify(
+            {
+              name: "web",
+              dependencies: {
+                pino: "^9.0.0",
+              },
+            },
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+        writeFileSync(
+          join(dir, "services", "api", "package.json"),
+          JSON.stringify(
+            {
+              name: "api",
+              dependencies: {
+                "@sentry/node": "^8.0.0",
+              },
+              devDependencies: {
+                pino: "^9.0.0",
+              },
+            },
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+
+        const result = await collectPackageSignals(dir);
+        expect(result.observabilityDependencies).toEqual(["@sentry/node", "pino"]);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

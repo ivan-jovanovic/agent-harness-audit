@@ -2,10 +2,15 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AgentAdapter } from "./adapter.js";
-import { runCommand } from "./command.js";
-import { parseJsonWithFallback } from "./parsing.js";
-import { DEEP_CHECK_IDS, DEEP_CHECK_METADATA } from "./checks.js";
-import type { AgentName, DeepAuditFinding, DeepAuditResult, RepoEvidence } from "../types.js";
+import { CommandTimeoutError, runCommand } from "./command.js";
+import { normalizeDeepAuditPayload, parseJsonWithFallback } from "./parsing.js";
+import { buildDeepAuditPrompt, estimateDeepPromptTokens } from "./deep-prompt.js";
+import type {
+  AgentName,
+  DeepAuditContext,
+  DeepAuditResult,
+  RepoEvidence,
+} from "../types.js";
 import { AuditUsageError } from "../types.js";
 
 const CODEX_DETECT_TIMEOUT_MS = 2_000;
@@ -28,6 +33,18 @@ const OUTPUT_SCHEMA = {
         additionalProperties: true,
       },
     },
+    strengths: {
+      type: "array",
+      items: { type: "string" },
+    },
+    risks: {
+      type: "array",
+      items: { type: "string" },
+    },
+    autonomyBlockers: {
+      type: "array",
+      items: { type: "string" },
+    },
   },
   required: ["findings"],
   additionalProperties: true,
@@ -35,102 +52,6 @@ const OUTPUT_SCHEMA = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function estimateTokens(prompt: string): number {
-  return Math.max(1, Math.round(prompt.length / 4));
-}
-
-function buildPrompt(projectPath: string, evidence: RepoEvidence): string {
-  return [
-    "You are performing a deep verification pass for an AI-agent-readiness audit of a software repository.",
-    "",
-    "Goal:",
-    "Assess whether this repository is ready for autonomous coding agents by checking if it provides:",
-    "1) clear operating instructions,",
-    "2) discoverable technical context,",
-    "3) runnable tooling/validation loops,",
-    "4) basic safety/setup guardrails.",
-    "",
-    "Important:",
-    "- Use ONLY the evidence provided below.",
-    "- Do NOT assume missing information.",
-    "- If evidence is ambiguous or absent, mark the check as passed=false.",
-    "- Be strict and repo-specific; avoid generic statements.",
-    "- This step does NOT compute score/weights; it only evaluates checks.",
-    "",
-    "Repository:",
-    `Repo path: ${projectPath}`,
-    "",
-    "Pre-collected signals (heuristic layer):",
-    JSON.stringify(evidence, null, 2),
-    "",
-    "Evaluate each check ID below. For each check return:",
-    "- passed: boolean",
-    "- evidence: one sentence with concrete repo-specific proof (or absence)",
-    "- failureNote: optional short remediation-oriented note when passed=false",
-    "",
-    "Check IDs:",
-    "",
-    DEEP_CHECK_IDS.join("\n"),
-    "",
-    "Check intent guide:",
-    "- has_primary_instructions: primary agent instructions (for example AGENTS.md or CLAUDE.md) exist and are usable.",
-    "- has_readme: meaningful README exists at expected root/docs location.",
-    "- has_generic_skills: reusable generic skills/prompts exist.",
-    "- has_tool_skills: tool-specific skills exist for targeted agent ecosystems.",
-    "- has_architecture_docs: architecture/system/repo-structure docs are discoverable.",
-    "- has_docs_index: a docs index such as docs/index.md or docs/README.md exists.",
-    "- has_structured_docs: docs/ is organized into topical sections or multiple docs files.",
-    "- has_docs_dir: docs directory exists and is usable.",
-    "- has_tsconfig: TypeScript config exists when TS context is expected.",
-    "- has_env_example: .env.example (or equivalent) exists with required keys.",
-    "- has_package_json: package.json exists at audit scope root.",
-    "- has_lockfile: dependency lockfile exists.",
-    "- has_architecture_lints: boundary-enforcement tooling such as dependency-cruiser or eslint-plugin-boundaries exists.",
-    "- has_local_dev_boot_path: a local dev/start/preview/serve script or equivalent app boot path exists.",
-    "- has_lint_script: lint script exists in package scripts.",
-    "- has_typecheck_script: typecheck script exists in package scripts.",
-    "- has_build_script: build script exists in package scripts.",
-    "- has_test_script: test script exists in package scripts.",
-    "- has_test_dir: test directory exists.",
-    "- has_test_files: at least one test file exists.",
-    "- has_e2e_or_smoke_tests: e2e or smoke test signals exist, such as Playwright/Cypress config or an e2e/smoke test directory.",
-    "- has_ci_pipeline: a CI pipeline file such as .github/workflows/*.yml|yaml or .gitlab-ci.yml exists.",
-    "- has_ci_validation: a CI pipeline runs validation commands on push or pull request events.",
-    "",
-    "Respond ONLY with JSON matching the output schema.",
-  ].join("\n");
-}
-
-function normalizeFindings(payload: unknown): DeepAuditFinding[] {
-  const rawFindings = (() => {
-    if (Array.isArray(payload)) return payload;
-    if (isRecord(payload) && Array.isArray(payload.findings)) return payload.findings;
-    return [];
-  })();
-
-  const findings: DeepAuditFinding[] = [];
-  for (const item of rawFindings) {
-    if (!isRecord(item)) continue;
-    const checkId = item.checkId;
-    const passed = item.passed;
-    if (typeof checkId !== "string" || typeof passed !== "boolean") continue;
-
-    const meta = DEEP_CHECK_METADATA[checkId];
-    if (!meta) continue;
-
-    findings.push({
-      categoryId: meta.categoryId,
-      checkId,
-      passed,
-      label: meta.label,
-      evidence: typeof item.evidence === "string" ? item.evidence : "",
-      failureNote: typeof item.failureNote === "string" ? item.failureNote : undefined,
-    });
-  }
-
-  return findings;
 }
 
 function parseCodexJsonl(stdout: string): unknown | null {
@@ -184,9 +105,13 @@ export class CodexAdapter implements AgentAdapter {
     }
   }
 
-  async invoke(projectPath: string, evidence: RepoEvidence): Promise<DeepAuditResult> {
-    const prompt = buildPrompt(projectPath, evidence);
-    const tokenEstimate = estimateTokens(prompt);
+  async invoke(
+    projectPath: string,
+    evidence: RepoEvidence,
+    context?: DeepAuditContext,
+  ): Promise<DeepAuditResult> {
+    const prompt = buildDeepAuditPrompt(projectPath, evidence, context);
+    const tokenEstimate = estimateDeepPromptTokens(projectPath, evidence, context);
     const tmpRoot = await mkdtemp(join(tmpdir(), "agent-harness-codex-"));
     const schemaPath = join(tmpRoot, "schema.json");
     const outputPath = join(tmpRoot, "last-message.json");
@@ -236,7 +161,8 @@ export class CodexAdapter implements AgentAdapter {
         throw new AuditUsageError("deep audit failed: Codex returned no parseable payload", this.name);
       }
 
-      const findings = normalizeFindings(payload);
+      const normalized = normalizeDeepAuditPayload(payload);
+      const { findings } = normalized;
       if (findings.length === 0) {
         throw new AuditUsageError("deep audit failed: Codex returned no valid findings", this.name);
       }
@@ -244,6 +170,9 @@ export class CodexAdapter implements AgentAdapter {
       return {
         agentName: this.name,
         findings,
+        strengths: normalized.strengths,
+        risks: normalized.risks,
+        autonomyBlockers: normalized.autonomyBlockers,
         tokenEstimate,
         tokensActual: 0,
         costEstimateUsd: 0,
@@ -251,6 +180,14 @@ export class CodexAdapter implements AgentAdapter {
         durationMs: result.durationMs,
         rawResponse: result.stdout,
       };
+    } catch (error) {
+      if (error instanceof CommandTimeoutError) {
+        throw new AuditUsageError(
+          `deep audit failed with Codex: timed out after ${CODEX_INVOKE_TIMEOUT_MS}ms`,
+          this.name,
+        );
+      }
+      throw error;
     } finally {
       await rm(tmpRoot, { recursive: true, force: true });
     }

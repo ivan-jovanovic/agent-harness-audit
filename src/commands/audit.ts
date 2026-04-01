@@ -10,8 +10,10 @@ import type {
 } from "../types.js";
 import { AuditUsageError } from "../types.js";
 import { discoverAgents, getAgentAdapter, selectAgent } from "../agents/index.js";
+import { collectDeepAuditContext } from "../inspection/deep-context.js";
 import { collectEvidence } from "../inspection/local.js";
 import { scoreProject } from "../scoring/index.js";
+import { buildStagedFixes, calculateReadinessLevel } from "../scoring/levels.js";
 import { reportText } from "../reporters/text.js";
 import { reportJson } from "../reporters/json.js";
 import { generateArtifacts, previewArtifacts } from "../artifacts/generate.js";
@@ -39,12 +41,14 @@ function cloneEvidence(evidence: RepoEvidence): RepoEvidence {
     files: { ...evidence.files },
     packages: {
       ...evidence.packages,
+      observabilityDependencies: [...(evidence.packages.observabilityDependencies ?? [])],
       scripts: { ...evidence.packages.scripts },
       warnings: [...evidence.packages.warnings],
     },
     tests: { ...evidence.tests },
     workflows: { ...evidence.workflows },
     context: { ...evidence.context },
+    levelOnlyChecks: evidence.levelOnlyChecks ? { ...evidence.levelOnlyChecks } : undefined,
     warnings: [...evidence.warnings],
   };
 }
@@ -94,7 +98,8 @@ export function mergeDeepFindings(
         merged.context.hasTsConfig = true;
         break;
       case "has_env_example":
-        merged.files.hasEnvExample = true;
+        // Canonical gate semantics are strict: deep mode must not infer
+        // .env.example from non-canonical env templates.
         break;
       case "has_package_json":
         merged.packages.hasPackageJson = true;
@@ -138,6 +143,14 @@ export function mergeDeepFindings(
       case "has_e2e_or_smoke_tests":
         merged.tests.hasE2eOrSmokeTests = true;
         break;
+      case "has_execution_plans":
+      case "has_short_navigational_instructions":
+      case "has_observability_signals":
+      case "has_quality_or_debt_tracking":
+        if (merged.levelOnlyChecks) {
+          merged.levelOnlyChecks[finding.checkId] = true;
+        }
+        break;
       default:
         break;
     }
@@ -179,6 +192,7 @@ export async function runAudit(input: AuditInput): Promise<AuditReport> {
   let deepOverrides: DeepCheckOverrides = {};
   let deepAudit: AuditReport["deepAudit"] = undefined;
   let evidenceByCheckId: Record<string, string> = {};
+  let deepContext: Awaited<ReturnType<typeof collectDeepAuditContext>> | undefined;
 
   if (input.deep) {
     const discovery = await discoverAgents();
@@ -191,7 +205,8 @@ export async function runAudit(input: AuditInput): Promise<AuditReport> {
     }
 
     const adapter = getAgentAdapter(selected);
-    deepAudit = await adapter.invoke(input.path, evidence);
+    deepContext = await collectDeepAuditContext(input.path, evidence);
+    deepAudit = await adapter.invoke(input.path, evidence, deepContext);
 
     const merged = mergeDeepFindings(evidence, deepAudit.findings);
     evidenceForScoring = merged.evidence;
@@ -212,6 +227,13 @@ export async function runAudit(input: AuditInput): Promise<AuditReport> {
     attachDeepEvidence(scoring, evidenceByCheckId);
   }
 
+  const levelOnlyChecks = evidenceForScoring.levelOnlyChecks ?? {};
+  const levelResult = calculateReadinessLevel(scoring, levelOnlyChecks);
+  const level = {
+    ...levelResult,
+    stagedFixes: buildStagedFixes(scoring, levelResult, levelOnlyChecks),
+  };
+
   const artifacts = input.writeArtifacts
     ? await generateArtifacts(input.path, evidenceForScoring, input, false)
     : previewArtifacts(input.path, evidenceForScoring, input);
@@ -222,6 +244,7 @@ export async function runAudit(input: AuditInput): Promise<AuditReport> {
     input,
     evidence: evidenceForScoring,
     scoring,
+    level,
     artifacts,
     deepAudit,
   };

@@ -22,7 +22,14 @@ describe("collectEvidence — minimal fixture", () => {
     // PackageSignals
     expect(ev.packages.hasPackageJson).toBe(true);
     expect(ev.packages.hasLockfile).toBe(false);
+    expect(ev.packages.observabilityDependencies).toEqual([]);
     expect(ev.packages.scripts.hasLocalDevBootPath).toBe(false);
+    expect(ev.levelOnlyChecks).toEqual({
+      has_execution_plans: false,
+      has_short_navigational_instructions: false,
+      has_observability_signals: false,
+      has_quality_or_debt_tracking: false,
+    });
     // TestSignals — all false
     expect(ev.tests.hasTestDir).toBe(false);
     expect(ev.tests.hasTestFiles).toBe(false);
@@ -84,6 +91,12 @@ describe("collectEvidence — strong fixture", () => {
     expect(ev.tests.hasE2eOrSmokeTests).toBe(true);
     expect(ev.context.hasTsConfig).toBe(true);
     expect(ev.context.detectedLanguage).toBe("typescript");
+    expect(ev.levelOnlyChecks).toEqual({
+      has_execution_plans: false,
+      has_short_navigational_instructions: false,
+      has_observability_signals: false,
+      has_quality_or_debt_tracking: false,
+    });
   });
 });
 
@@ -381,6 +394,79 @@ describe("collectEvidence — monorepo aggregation", () => {
     }
   });
 
+  it("detects nested backend/src/tests paths inside a package root", async () => {
+    const dir = makeRepo();
+    try {
+      mkdirSync(join(dir, "backend", "src", "tests"), { recursive: true });
+      writeFileSync(
+        join(dir, "backend", "package.json"),
+        JSON.stringify(
+          {
+            name: "backend",
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+      writeFileSync(
+        join(dir, "backend", "src", "tests", "health.test.ts"),
+        "test('health', () => {})",
+        "utf-8",
+      );
+
+      const ev = await collectEvidence(dir);
+      expect(ev.tests.hasTestDir).toBe(true);
+      expect(ev.tests.hasTestFiles).toBe(true);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("detects test signals from nested package roots under packages/*", async () => {
+    const dir = makeRepo();
+    try {
+      mkdirSync(join(dir, "packages", "api", "src", "__tests__"), { recursive: true });
+      writeFileSync(
+        join(dir, "packages", "api", "package.json"),
+        JSON.stringify(
+          {
+            name: "api",
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+      writeFileSync(
+        join(dir, "packages", "api", "src", "__tests__", "routes.spec.ts"),
+        "test('routes', () => {})",
+        "utf-8",
+      );
+
+      const ev = await collectEvidence(dir);
+      expect(ev.tests.hasTestDir).toBe(true);
+      expect(ev.tests.hasTestFiles).toBe(true);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("does not count docs/tests or docs/*.spec.md as test signals", async () => {
+    const dir = makeRepo();
+    try {
+      mkdirSync(join(dir, "docs", "tests"), { recursive: true });
+      writeFileSync(join(dir, "docs", "tests", "readme.md"), "# docs tests", "utf-8");
+      writeFileSync(join(dir, "docs", "architecture.spec.md"), "# spec doc", "utf-8");
+
+      const ev = await collectEvidence(dir);
+      expect(ev.tests.hasTestDir).toBe(false);
+      expect(ev.tests.hasTestFiles).toBe(false);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
   it("detects deeply nested e2e or smoke test paths", async () => {
     const dir = makeRepo();
     try {
@@ -406,6 +492,197 @@ describe("collectEvidence — monorepo aggregation", () => {
 
       const ev = await collectEvidence(dir);
       expect(ev.tests.hasE2eOrSmokeTests).toBe(true);
+    } finally {
+      cleanup(dir);
+    }
+  });
+});
+
+describe("collectEvidence — level-only checks", () => {
+  function makeRepo(): string {
+    return mkdtempSync(join(tmpdir(), "harness-level-only-"));
+  }
+
+  function cleanup(dir: string): void {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  it("passes has_execution_plans for root plan files and plans/ docs", async () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(join(dir, "implementation-plan-v1.md"), "# plan", "utf-8");
+      mkdirSync(join(dir, "docs", "plans"), { recursive: true });
+      writeFileSync(join(dir, "docs", "plans", "q2.md"), "# q2", "utf-8");
+
+      const ev = await collectEvidence(dir);
+      expect(ev.levelOnlyChecks?.has_execution_plans).toBe(true);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("passes has_short_navigational_instructions for concise navigable AGENTS docs", async () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(
+        join(dir, "AGENTS.md"),
+        ["# Agent instructions", "", "Read [Architecture](docs/architecture.md).", "Read [Index](docs/index.md)."].join(
+          "\n",
+        ),
+        "utf-8",
+      );
+      mkdirSync(join(dir, "docs"), { recursive: true });
+      writeFileSync(join(dir, "docs", "architecture.md"), "# arch", "utf-8");
+      writeFileSync(join(dir, "docs", "index.md"), "# docs", "utf-8");
+
+      const ev = await collectEvidence(dir);
+      expect(ev.levelOnlyChecks?.has_short_navigational_instructions).toBe(true);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("passes has_short_navigational_instructions for longer CLAUDE docs with multiple explicit repo paths", async () => {
+    const dir = makeRepo();
+    try {
+      const body = [
+        "# Claude instructions",
+        ...Array.from({ length: 318 }, (_, index) => `Guidance line ${index + 1}`),
+        "- `docs/index.md`",
+        "- `packages/api/src/handlers/`",
+        "- `backend/services/`",
+      ].join("\n");
+      writeFileSync(join(dir, "CLAUDE.md"), body, "utf-8");
+
+      const ev = await collectEvidence(dir);
+      expect(ev.levelOnlyChecks?.has_short_navigational_instructions).toBe(true);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("fails has_short_navigational_instructions when AGENTS exists but remains non-navigational", async () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(join(dir, "AGENTS.md"), "# Agent instructions\nNo local links here.", "utf-8");
+      writeFileSync(
+        join(dir, "CLAUDE.md"),
+        ["# Claude instructions", "[A](docs/a.md)", "[B](docs/b.md)"].join("\n"),
+        "utf-8",
+      );
+      mkdirSync(join(dir, "docs"), { recursive: true });
+      writeFileSync(join(dir, "docs", "a.md"), "# a", "utf-8");
+      writeFileSync(join(dir, "docs", "b.md"), "# b", "utf-8");
+
+      const ev = await collectEvidence(dir);
+      expect(ev.levelOnlyChecks?.has_short_navigational_instructions).toBe(false);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("fails has_short_navigational_instructions for longer CLAUDE docs with only one weak path mention and no links", async () => {
+    const dir = makeRepo();
+    try {
+      const body = [
+        "# Claude instructions",
+        ...Array.from({ length: 320 }, (_, index) => `General guidance paragraph ${index + 1}`),
+        "We should review services/ over time.",
+      ].join("\n");
+      writeFileSync(join(dir, "CLAUDE.md"), body, "utf-8");
+
+      const ev = await collectEvidence(dir);
+      expect(ev.levelOnlyChecks?.has_short_navigational_instructions).toBe(false);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("passes has_observability_signals for root observability files", async () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(join(dir, "observability.ts"), "export const enabled = true;", "utf-8");
+
+      const ev = await collectEvidence(dir);
+      expect(ev.levelOnlyChecks?.has_observability_signals).toBe(true);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("passes has_observability_signals when package dependencies include observability libraries", async () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(
+        join(dir, "package.json"),
+        JSON.stringify(
+          {
+            name: "obs-deps",
+            dependencies: {
+              "prom-client": "^15.0.0",
+            },
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const ev = await collectEvidence(dir);
+      expect(ev.packages.observabilityDependencies).toEqual(["prom-client"]);
+      expect(ev.levelOnlyChecks?.has_observability_signals).toBe(true);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("passes has_quality_or_debt_tracking for known root files and docs paths", async () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(join(dir, "TECH_DEBT.md"), "# debt", "utf-8");
+      mkdirSync(join(dir, "docs", "maintenance"), { recursive: true });
+      writeFileSync(join(dir, "docs", "maintenance", "todo.md"), "# maintenance", "utf-8");
+
+      const ev = await collectEvidence(dir);
+      expect(ev.levelOnlyChecks?.has_quality_or_debt_tracking).toBe(true);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("passes has_quality_or_debt_tracking for docs/plans files with quality-debt keywords", async () => {
+    const dir = makeRepo();
+    try {
+      mkdirSync(join(dir, "docs", "plans"), { recursive: true });
+      writeFileSync(join(dir, "docs", "plans", "q3-quality-audit.md"), "# audit plan", "utf-8");
+
+      const ev = await collectEvidence(dir);
+      expect(ev.levelOnlyChecks?.has_quality_or_debt_tracking).toBe(true);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("does not pass has_quality_or_debt_tracking for docs/plans refactor-only filenames", async () => {
+    const dir = makeRepo();
+    try {
+      mkdirSync(join(dir, "docs", "plans"), { recursive: true });
+      writeFileSync(join(dir, "docs", "plans", "q3-refactor-plan.md"), "# refactor plan", "utf-8");
+
+      const ev = await collectEvidence(dir);
+      expect(ev.levelOnlyChecks?.has_quality_or_debt_tracking).toBe(false);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("does not pass has_quality_or_debt_tracking for tech-debt.md alias", async () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(join(dir, "tech-debt.md"), "# debt alias", "utf-8");
+
+      const ev = await collectEvidence(dir);
+      expect(ev.levelOnlyChecks?.has_quality_or_debt_tracking).toBe(false);
     } finally {
       cleanup(dir);
     }

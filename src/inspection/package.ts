@@ -16,6 +16,18 @@ const ARCHITECTURE_LINT_CONFIG_FILES = [
   "dependency-cruiser.config.mjs",
 ];
 const ARCHITECTURE_LINT_PACKAGE_NAMES = ["dependency-cruiser", "eslint-plugin-boundaries"];
+const OBSERVABILITY_DEPENDENCY_NAMES = [
+  "pino",
+  "winston",
+  "@opentelemetry/api",
+  "@opentelemetry/sdk-node",
+  "@sentry/node",
+  "@sentry/browser",
+  "@sentry/nextjs",
+  "dd-trace",
+  "newrelic",
+  "prom-client",
+];
 const WORKSPACE_DIR_NAMES = [
   "packages",
   "apps",
@@ -63,6 +75,20 @@ function hasArchitectureLintDependency(pkg: {
   };
 
   return ARCHITECTURE_LINT_PACKAGE_NAMES.some((name) => name in allDeps);
+}
+
+function getObservabilityDependencies(pkg: {
+  dependencies?: Record<string, unknown>;
+  devDependencies?: Record<string, unknown>;
+}): string[] {
+  const allDeps = {
+    ...(pkg.dependencies ?? {}),
+    ...(pkg.devDependencies ?? {}),
+  };
+
+  return OBSERVABILITY_DEPENDENCY_NAMES.filter((name) => name in allDeps).sort((left, right) =>
+    left.localeCompare(right),
+  );
 }
 
 async function readWorkspacePatterns(projectPath: string): Promise<string[]> {
@@ -220,6 +246,7 @@ export async function parsePackageSignals(projectPath: string): Promise<PackageS
     hasBuild: false,
   };
   let hasArchitectureLints = hasArchitectureLintConfig(projectPath);
+  let observabilityDependencies: string[] = [];
   const warnings: string[] = [];
 
   if (hasPackageJson) {
@@ -242,12 +269,21 @@ export async function parsePackageSignals(projectPath: string): Promise<PackageS
       scripts.hasTest = "test" in s;
       scripts.hasBuild = "build" in s;
       hasArchitectureLints = hasArchitectureLints || hasArchitectureLintDependency(pkg);
+      observabilityDependencies = getObservabilityDependencies(pkg);
     } catch {
       warnings.push("package.json exists but could not be parsed");
     }
   }
 
-  return { hasPackageJson, hasLockfile, hasArchitectureLints, lockfileType, scripts, warnings };
+  return {
+    hasPackageJson,
+    hasLockfile,
+    hasArchitectureLints,
+    observabilityDependencies,
+    lockfileType,
+    scripts,
+    warnings,
+  };
 }
 
 export async function collectPackageSignals(projectPath: string): Promise<PackageSignals> {
@@ -257,6 +293,7 @@ export async function collectPackageSignals(projectPath: string): Promise<Packag
       hasPackageJson: false,
       hasLockfile: false,
       hasArchitectureLints: false,
+      observabilityDependencies: [],
       scripts: {
         hasLocalDevBootPath: false,
         hasLint: false,
@@ -272,6 +309,7 @@ export async function collectPackageSignals(projectPath: string): Promise<Packag
     hasPackageJson: false,
     hasLockfile: false,
     hasArchitectureLints: false,
+    observabilityDependencies: [],
     lockfileType: undefined,
     scripts: {
       hasLocalDevBootPath: false,
@@ -296,11 +334,17 @@ export async function collectPackageSignals(projectPath: string): Promise<Packag
     aggregate.scripts.hasTest = aggregate.scripts.hasTest || signals.scripts.hasTest;
     aggregate.scripts.hasBuild = aggregate.scripts.hasBuild || signals.scripts.hasBuild;
     aggregate.lockfileType = aggregate.lockfileType ?? signals.lockfileType;
+    for (const dependency of signals.observabilityDependencies ?? []) {
+      aggregate.observabilityDependencies?.push(dependency);
+    }
     for (const warning of signals.warnings) {
       warnings.add(warning);
     }
   }
 
+  aggregate.observabilityDependencies = [...new Set(aggregate.observabilityDependencies)].sort((left, right) =>
+    left.localeCompare(right),
+  );
   aggregate.warnings = [...warnings];
   return aggregate;
 }

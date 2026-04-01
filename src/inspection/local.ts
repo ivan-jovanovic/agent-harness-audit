@@ -6,6 +6,7 @@ import type {
   TestSignals,
   WorkflowSignals,
   ContextSignals,
+  LevelOnlyEvidence,
 } from "../types.js";
 import { AuditUsageError } from "../types.js";
 import { collectPackageSignals, discoverPackageRoots } from "./package.js";
@@ -71,6 +72,39 @@ async function hasDocsIndexFile(root: string): Promise<boolean> {
   }
 }
 
+const EXECUTION_PLAN_ROOT_FILE_PATTERNS = [
+  /^implementation-plan.*\.md$/i,
+  /^execution-plan.*\.md$/i,
+  /^roadmap.*\.md$/i,
+  /^mvp-plan.*\.md$/i,
+  /^product-roadmap.*\.md$/i,
+];
+const MARKDOWN_FILE_RE = /\.(md|mdx)$/i;
+const LOCAL_MARKDOWN_LINK_RE = /\[[^\]]+\]\((?!https?:\/\/)[^)]+\)/g;
+const REPO_PATH_SEGMENT_RE =
+  /^(?:\.\/)?(?:src|docs|backend|frontend|packages|apps|services|libs|projects|modules|server|client|scripts|config|configs|infra|infrastructure)(?:\/[A-Za-z0-9._-]+)*\/?$/i;
+const REPO_PATH_TOKEN_RE =
+  /(?:\.\/)?(?:src|docs|backend|frontend|packages|apps|services|libs|projects|modules|server|client|scripts|config|configs|infra|infrastructure)(?:\/[A-Za-z0-9._-]+)*\/?/gi;
+const ROOT_OBSERVABILITY_FILES = new Set([
+  "instrumentation.ts",
+  "instrumentation.js",
+  "telemetry.ts",
+  "telemetry.js",
+  "observability.ts",
+  "observability.js",
+]);
+const ROOT_QUALITY_DEBT_FILES = new Set([
+  "tech_debt.md",
+  "debt.md",
+  "quality.md",
+  "backlog.md",
+  "todo.md",
+]);
+const QUALITY_DEBT_PLAN_FILE_RE = /(?:^|[._-])(quality|debt|audit|maintenance)(?:[._-]|$)/i;
+const TEST_DIR_NAMES = new Set(["tests", "test", "__tests__"]);
+const TEST_FILE_RE = /\.(test|spec)\.(js|cjs|mjs|jsx|ts|cts|mts|tsx)$/i;
+const NON_TEST_CONTENT_DIR_NAMES = new Set(["docs", "doc", "examples", "example", "demo", "demos"]);
+
 const E2E_OR_SMOKE_DIR_NAMES = ["e2e", "smoke", "e2e-tests", "smoke-tests"];
 const E2E_OR_SMOKE_FILE_RE = /\.(e2e|smoke)\.[^.]+$/i;
 const E2E_OR_SMOKE_CONFIG_FILES = [
@@ -121,6 +155,37 @@ async function dirHasFiles(root: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function hasMatchingFile(
+  root: string,
+  matcher: (entryPath: string, entryName: string) => boolean,
+  depth = 0,
+  maxDepth = 4,
+): Promise<boolean> {
+  if (depth > maxDepth) return false;
+
+  try {
+    const entries = await readdir(root, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = join(root, entry.name);
+      if (entry.isFile() && matcher(entryPath, entry.name)) {
+        return true;
+      }
+
+      if (!entry.isDirectory() || IGNORED_DIR_NAMES.has(entry.name)) {
+        continue;
+      }
+
+      if (await hasMatchingFile(entryPath, matcher, depth + 1, maxDepth)) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
 }
 
 async function scanForE2eSmokeSignals(root: string, depth = 0, maxDepth = 4): Promise<boolean> {
@@ -216,6 +281,179 @@ async function hasE2eOrSmokeTests(projectPath: string, hasPlaywrightConfig: bool
 
   for (const root of searchRoots) {
     if (await scanForE2eSmokeSignals(root)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function listRootFileNames(projectPath: string): Promise<string[]> {
+  try {
+    const entries = await readdir(projectPath, { withFileTypes: true });
+    return entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
+async function hasExecutionPlanSignal(projectPath: string): Promise<boolean> {
+  const rootFileNames = await listRootFileNames(projectPath);
+  if (
+    rootFileNames.some((entryName) =>
+      EXECUTION_PLAN_ROOT_FILE_PATTERNS.some((pattern) => pattern.test(entryName)),
+    )
+  ) {
+    return true;
+  }
+
+  const hasPlansMarkdown = await hasMatchingFile(
+    join(projectPath, "plans"),
+    (_entryPath, entryName) => MARKDOWN_FILE_RE.test(entryName),
+    0,
+    8,
+  );
+  if (hasPlansMarkdown) {
+    return true;
+  }
+
+  return hasMatchingFile(
+    join(projectPath, "docs", "plans"),
+    (_entryPath, entryName) => MARKDOWN_FILE_RE.test(entryName),
+    0,
+    8,
+  );
+}
+
+async function hasQualityOrDebtTrackingSignal(projectPath: string): Promise<boolean> {
+  const rootFileNames = await listRootFileNames(projectPath);
+  const rootFileNamesNormalized = new Set(rootFileNames.map((name) => name.toLowerCase()));
+  for (const targetName of ROOT_QUALITY_DEBT_FILES) {
+    if (rootFileNamesNormalized.has(targetName)) {
+      return true;
+    }
+  }
+
+  const hasDebtDocs = await hasMatchingFile(
+    join(projectPath, "docs", "debt"),
+    (_entryPath, entryName) => MARKDOWN_FILE_RE.test(entryName),
+    0,
+    8,
+  );
+  if (hasDebtDocs) {
+    return true;
+  }
+
+  const hasQualityDocs = await hasMatchingFile(
+    join(projectPath, "docs", "quality"),
+    (_entryPath, entryName) => MARKDOWN_FILE_RE.test(entryName),
+    0,
+    8,
+  );
+  if (hasQualityDocs) {
+    return true;
+  }
+
+  const hasMaintenanceDocs = await hasMatchingFile(
+    join(projectPath, "docs", "maintenance"),
+    (_entryPath, entryName) => MARKDOWN_FILE_RE.test(entryName),
+    0,
+    8,
+  );
+  if (hasMaintenanceDocs) {
+    return true;
+  }
+
+  return hasMatchingFile(
+    join(projectPath, "docs", "plans"),
+    (_entryPath, entryName) =>
+      MARKDOWN_FILE_RE.test(entryName) && QUALITY_DEBT_PLAN_FILE_RE.test(entryName.toLowerCase()),
+    0,
+    8,
+  );
+}
+
+async function hasShortNavigationalInstructionsSignal(projectPath: string): Promise<boolean> {
+  let instructionPath: string | undefined;
+
+  if (await exists(join(projectPath, "AGENTS.md"))) {
+    instructionPath = join(projectPath, "AGENTS.md");
+  } else if (await exists(join(projectPath, "CLAUDE.md"))) {
+    instructionPath = join(projectPath, "CLAUDE.md");
+  }
+
+  if (!instructionPath) {
+    return false;
+  }
+
+  try {
+    const raw = await readFile(instructionPath, "utf-8");
+    const lines = raw.length === 0 ? [] : raw.split(/\r?\n/);
+    const lineCount = lines.length;
+    const nonEmptyLineCount = lines.filter((line) => line.trim().length > 0).length;
+    const localLinks = raw.match(LOCAL_MARKDOWN_LINK_RE) ?? [];
+    const repoPathMentions = countRepoPathMentions(raw);
+
+    if (lineCount === 0 || lineCount > 350 || nonEmptyLineCount < 3) {
+      return false;
+    }
+
+    if (localLinks.length >= 2) {
+      return true;
+    }
+    if (localLinks.length >= 1 && repoPathMentions >= 1) {
+      return true;
+    }
+    return repoPathMentions >= 3;
+  } catch {
+    return false;
+  }
+}
+
+function countRepoPathMentions(raw: string): number {
+  const paths = new Set<string>();
+
+  // Prefer code-formatted mentions to avoid accidental prose matches.
+  const inlineCodeMatches = raw.match(/`[^`]+`/g) ?? [];
+  for (const match of inlineCodeMatches) {
+    const content = match.slice(1, -1).trim();
+    if (!content) continue;
+    const tokens = content.match(REPO_PATH_TOKEN_RE) ?? [];
+    for (const token of tokens) {
+      const normalized = token.replace(/[),.;:!?]+$/, "").trim();
+      if (REPO_PATH_SEGMENT_RE.test(normalized)) {
+        paths.add(normalized.toLowerCase());
+      }
+    }
+  }
+
+  // Also count explicit path-only lines (bulleted or plain) as navigational signals.
+  const lines = raw.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    let candidate = line;
+    if (/^[-*]\s+/.test(candidate)) {
+      candidate = candidate.replace(/^[-*]\s+/, "").trim();
+    } else if (/^\d+\.\s+/.test(candidate)) {
+      candidate = candidate.replace(/^\d+\.\s+/, "").trim();
+    }
+
+    if (REPO_PATH_SEGMENT_RE.test(candidate)) {
+      paths.add(candidate.toLowerCase());
+    }
+  }
+
+  return paths.size;
+}
+
+async function hasObservabilitySignalFile(projectPath: string): Promise<boolean> {
+  const rootFileNames = await listRootFileNames(projectPath);
+  const rootFileNamesNormalized = new Set(rootFileNames.map((name) => name.toLowerCase()));
+
+  for (const targetName of ROOT_OBSERVABILITY_FILES) {
+    if (rootFileNamesNormalized.has(targetName)) {
       return true;
     }
   }
@@ -340,34 +578,9 @@ async function collectFileSignals(projectPath: string): Promise<FileSignals> {
 }
 
 async function collectTestSignalsAtPath(projectPath: string): Promise<TestSignals> {
-  const testDirNames = ["tests", "test", "__tests__"];
-  const testDirResults = await Promise.all(
-    testDirNames.map((d) => isDir(join(projectPath, d)))
-  );
-  const hasTestDir = testDirResults.some(Boolean);
-
-  // Check for *.test.* or *.spec.* files at root level and one level into test directories
-  const TEST_FILE_RE = /\.(test|spec)\.[^.]+$/;
-  let hasTestFiles = false;
-  try {
-    const rootEntries = await readdir(projectPath);
-    hasTestFiles = rootEntries.some((f) => TEST_FILE_RE.test(f));
-  } catch {
-    // ignore
-  }
-  if (!hasTestFiles) {
-    for (const dirName of testDirNames) {
-      try {
-        const entries = await readdir(join(projectPath, dirName));
-        if (entries.some((f) => TEST_FILE_RE.test(f))) {
-          hasTestFiles = true;
-          break;
-        }
-      } catch {
-        // directory doesn't exist or can't be read
-      }
-    }
-  }
+  const testSignals = await scanForTestSignals(projectPath);
+  const hasTestDir = testSignals.hasTestDir;
+  const hasTestFiles = testSignals.hasTestFiles;
 
   const [hasVitestConfig, hasJestConfig, hasPlaywrightConfig] = await Promise.all([
     (async () => {
@@ -400,6 +613,62 @@ async function collectTestSignalsAtPath(projectPath: string): Promise<TestSignal
     hasJestConfig,
     hasPlaywrightConfig,
   };
+}
+
+interface RecursiveTestSignals {
+  hasTestDir: boolean;
+  hasTestFiles: boolean;
+}
+
+async function scanForTestSignals(root: string, depth = 0, maxDepth = 8): Promise<RecursiveTestSignals> {
+  if (depth > maxDepth) {
+    return { hasTestDir: false, hasTestFiles: false };
+  }
+
+  try {
+    const entries = await readdir(root, { withFileTypes: true });
+    let hasTestDir = false;
+    let hasTestFiles = false;
+    const subdirectories: string[] = [];
+
+    for (const entry of entries) {
+      if (entry.isFile() && TEST_FILE_RE.test(entry.name)) {
+        hasTestFiles = true;
+      }
+
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      const dirName = entry.name.toLowerCase();
+      if (IGNORED_DIR_NAMES.has(dirName) || NON_TEST_CONTENT_DIR_NAMES.has(dirName)) {
+        continue;
+      }
+
+      if (TEST_DIR_NAMES.has(dirName)) {
+        hasTestDir = true;
+      }
+      subdirectories.push(join(root, entry.name));
+    }
+
+    if (depth === maxDepth || (hasTestDir && hasTestFiles)) {
+      return { hasTestDir, hasTestFiles };
+    }
+
+    for (const dirPath of subdirectories) {
+      const childSignals = await scanForTestSignals(dirPath, depth + 1, maxDepth);
+      hasTestDir = hasTestDir || childSignals.hasTestDir;
+      hasTestFiles = hasTestFiles || childSignals.hasTestFiles;
+
+      if (hasTestDir && hasTestFiles) {
+        break;
+      }
+    }
+
+    return { hasTestDir, hasTestFiles };
+  } catch {
+    return { hasTestDir: false, hasTestFiles: false };
+  }
 }
 
 async function collectTestSignals(projectPath: string, packageRoots: string[]): Promise<TestSignals> {
@@ -530,15 +799,36 @@ export async function collectEvidence(projectPath: string): Promise<RepoEvidence
   }
 
   const packageRoots = await discoverPackageRoots(projectPath);
-  const [files, packages, tests, workflows, context] = await Promise.all([
+  const [
+    files,
+    packages,
+    tests,
+    workflows,
+    context,
+    hasExecutionPlans,
+    hasShortNavigationalInstructions,
+    hasObservabilityFileSignal,
+    hasQualityOrDebtTracking,
+  ] = await Promise.all([
     collectFileSignals(projectPath),
     collectPackageSignals(projectPath),
     collectTestSignals(projectPath, packageRoots),
     collectWorkflowSignals(projectPath),
     collectContextSignals(projectPath),
+    hasExecutionPlanSignal(projectPath),
+    hasShortNavigationalInstructionsSignal(projectPath),
+    hasObservabilitySignalFile(projectPath),
+    hasQualityOrDebtTrackingSignal(projectPath),
   ]);
 
+  const levelOnlyChecks: LevelOnlyEvidence = {
+    has_execution_plans: hasExecutionPlans,
+    has_short_navigational_instructions: hasShortNavigationalInstructions,
+    has_observability_signals:
+      (packages.observabilityDependencies?.length ?? 0) > 0 || hasObservabilityFileSignal,
+    has_quality_or_debt_tracking: hasQualityOrDebtTracking,
+  };
   const warnings = [...packages.warnings];
 
-  return { files, packages, tests, workflows, context, warnings };
+  return { files, packages, tests, workflows, context, levelOnlyChecks, warnings };
 }

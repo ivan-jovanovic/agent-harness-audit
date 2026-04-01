@@ -63,6 +63,7 @@ export interface PackageSignals {
   hasPackageJson: boolean;
   hasLockfile: boolean;
   hasArchitectureLints: boolean;
+  observabilityDependencies?: string[];
   lockfileType?: "npm" | "pnpm" | "yarn";
   scripts: {
     hasLocalDevBootPath: boolean;
@@ -104,6 +105,7 @@ export interface RepoEvidence {
   tests: TestSignals;
   workflows: WorkflowSignals;
   context: ContextSignals;
+  levelOnlyChecks?: LevelOnlyEvidence;
   warnings: string[];
 }
 
@@ -112,6 +114,27 @@ export interface RepoEvidence {
 export interface AgentDiscoveryResult {
   available: AgentName[];
   selected?: AgentName;
+}
+
+export type DeepAuditExcerptKind =
+  | "root-tree"
+  | "instructions"
+  | "docs-index"
+  | "docs-listing"
+  | "package-scripts"
+  | "workflows"
+  | "architecture-doc";
+
+export interface DeepAuditExcerptSection {
+  kind: DeepAuditExcerptKind;
+  title: string;
+  path?: string;
+  content: string;
+  truncated: boolean;
+}
+
+export interface DeepAuditContext {
+  sections: DeepAuditExcerptSection[];
 }
 
 export interface DeepAuditFinding {
@@ -126,6 +149,9 @@ export interface DeepAuditFinding {
 export interface DeepAuditResult {
   agentName: AgentName;
   findings: DeepAuditFinding[];
+  strengths?: string[];
+  risks?: string[];
+  autonomyBlockers?: string[];
   tokenEstimate: number;
   tokensActual: number;
   costEstimateUsd: number;
@@ -191,6 +217,43 @@ export interface ToolSpecificFixItem {
   priority: number;
 }
 
+export type ReadinessLevelId = 1 | 2 | 3 | 4;
+export type ReadinessLevelLabel = "Bootstrap" | "Baseline" | "Reliable" | "Autonomous-Ready";
+export type ReadinessLevelGateSet = "level1" | "level2" | "level3" | "level4_additional";
+export type LevelOnlyCheckId =
+  | "has_execution_plans"
+  | "has_short_navigational_instructions"
+  | "has_observability_signals"
+  | "has_quality_or_debt_tracking";
+export type LevelOnlyEvidence = Record<LevelOnlyCheckId, boolean>;
+export type LevelOnlyCheckStates = Partial<Record<LevelOnlyCheckId, boolean>>;
+
+export interface NormalizedCheckState {
+  id: string;
+  passed: boolean;
+  label: string;
+  categoryId?: CategoryId;
+  source: "scored" | "level-only";
+}
+
+export interface ReadinessLevelResult {
+  id: ReadinessLevelId;
+  label: ReadinessLevelLabel;
+  blockingGateSet: ReadinessLevelGateSet;
+  failedHardGates: string[];
+  nextLevelId?: Exclude<ReadinessLevelId, 1>;
+}
+
+export interface ReadinessStagedFixes {
+  now: string[];
+  next: string[];
+  later: string[];
+}
+
+export interface ReportLevel extends ReadinessLevelResult {
+  stagedFixes: ReadinessStagedFixes;
+}
+
 export interface ScoringResult {
   overallScore: number;
   categoryScores: CategoryScore[];
@@ -219,6 +282,7 @@ export interface AuditReport {
   input: AuditInput;
   evidence: RepoEvidence;
   scoring: ScoringResult;
+  level?: ReportLevel;
   artifacts: ArtifactResult[];
   deepAudit?: DeepAuditResult;
 }

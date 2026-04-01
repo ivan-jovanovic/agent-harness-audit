@@ -1,8 +1,12 @@
-import type { AgentName, RepoEvidence, DeepAuditResult } from "../types.js";
+import type {
+  AgentName,
+  DeepAuditContext,
+  RepoEvidence,
+  DeepAuditResult,
+} from "../types.js";
 
 export interface AgentAdapter {
   name: AgentName;
   detect(): Promise<boolean>;
-  invoke(projectPath: string, evidence: RepoEvidence): Promise<DeepAuditResult>;
+  invoke(projectPath: string, evidence: RepoEvidence, context?: DeepAuditContext): Promise<DeepAuditResult>;
 }
-

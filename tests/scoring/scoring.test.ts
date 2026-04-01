@@ -10,6 +10,13 @@ import { scoreTooling } from "../../src/scoring/categories/tooling.js";
 import { scoreFeedback } from "../../src/scoring/categories/feedback.js";
 import { scoreSafety } from "../../src/scoring/categories/safety.js";
 import { scoreProject } from "../../src/scoring/index.js";
+import {
+  buildStagedFixes,
+  calculateReadinessLevel,
+  capStagedFixesForText,
+  normalizeScoredChecks,
+} from "../../src/scoring/levels.js";
+import type { CategoryScore } from "../../src/types.js";
 
 const fixturesDir = join(fileURLToPath(import.meta.url), "../../../fixtures");
 
@@ -465,18 +472,18 @@ describe("scoreFeedback — strong fixture", () => {
 });
 
 describe("scoreFeedback — ts-webapp fixture", () => {
-  it("passes test_script, test_dir, e2e, and CI validation but not has_test_files", async () => {
+  it("passes all feedback checks including nested has_test_files detection", async () => {
     const ev = await collectEvidence(join(fixturesDir, "ts-webapp"));
     const result = scoreFeedback(ev);
     const passingIds = result.checks.filter((c) => c.passed).map((c) => c.id);
     expect(passingIds).toContain("has_test_script");
     expect(passingIds).toContain("has_test_dir");
+    expect(passingIds).toContain("has_test_files");
     expect(passingIds).toContain("has_e2e_or_smoke_tests");
     expect(passingIds).toContain("has_ci_pipeline");
     expect(passingIds).toContain("has_ci_validation");
-    expect(passingIds).not.toContain("has_test_files");
-    expect(result.score).toBe(4.3);
-    expect(result.failingChecks).toHaveLength(1);
+    expect(result.score).toBe(5);
+    expect(result.failingChecks).toHaveLength(0);
   });
 });
 
@@ -760,5 +767,347 @@ describe("scoreProject — deep overrides", () => {
     );
 
     expect(result.categoryScores.find((c) => c.id === "instructions")?.checks.find((c) => c.id === "has_readme")?.passed).toBe(true);
+  });
+});
+
+describe("normalizeScoredChecks", () => {
+  it("collapses duplicate check ids by logical OR and uses stable category order for metadata", () => {
+    const categoryScores: CategoryScore[] = [
+      {
+        id: "safety",
+        label: "Safety",
+        score: 0,
+        maxScore: 5,
+        checks: [
+          {
+            id: "has_architecture_docs",
+            passed: false,
+            weight: 0.4,
+            label: "Architecture docs from safety",
+          },
+        ],
+        failingChecks: [],
+      },
+      {
+        id: "instructions",
+        label: "Instructions",
+        score: 0,
+        maxScore: 5,
+        checks: [
+          {
+            id: "has_primary_instructions",
+            passed: false,
+            weight: 0.5,
+            label: "Primary instructions present",
+          },
+        ],
+        failingChecks: [],
+      },
+      {
+        id: "context",
+        label: "Context",
+        score: 0,
+        maxScore: 5,
+        checks: [
+          {
+            id: "has_architecture_docs",
+            passed: true,
+            weight: 0.3,
+            label: "Architecture docs exist",
+          },
+        ],
+        failingChecks: [],
+      },
+    ];
+
+    const normalized = normalizeScoredChecks(categoryScores);
+
+    expect(normalized.map((check) => check.id)).toEqual([
+      "has_primary_instructions",
+      "has_architecture_docs",
+    ]);
+    expect(normalized.find((check) => check.id === "has_architecture_docs")).toEqual({
+      id: "has_architecture_docs",
+      passed: true,
+      label: "Architecture docs exist",
+      categoryId: "context",
+      source: "scored",
+    });
+  });
+});
+
+describe("calculateReadinessLevel", () => {
+  it("returns Bootstrap when any level 1 hard gate fails", async () => {
+    const ev = await collectEvidence(join(fixturesDir, "minimal"));
+    const scoring = scoreProject(ev, { toolsRequested: "all", toolsResolved: ["other"] });
+
+    expect(calculateReadinessLevel(scoring)).toEqual({
+      id: 1,
+      label: "Bootstrap",
+      blockingGateSet: "level1",
+      failedHardGates: [
+        "has_lockfile",
+        "has_primary_instructions",
+        "has_readme",
+        "has_test_script",
+        "has_local_dev_boot_path",
+      ],
+      nextLevelId: 2,
+    });
+  });
+
+  it("treats missing level-only level 3 checks as failed until passed separately", async () => {
+    const ev = await collectEvidence(join(fixturesDir, "strong"));
+    const scoring = scoreProject(ev, { toolsRequested: "all", toolsResolved: ["other"] });
+
+    expect(calculateReadinessLevel(scoring)).toEqual({
+      id: 3,
+      label: "Reliable",
+      blockingGateSet: "level3",
+      failedHardGates: ["has_execution_plans"],
+      nextLevelId: 4,
+    });
+
+    expect(
+      calculateReadinessLevel(scoring, {
+        has_execution_plans: true,
+      }),
+    ).toEqual({
+      id: 3,
+      label: "Reliable",
+      blockingGateSet: "level4_additional",
+      failedHardGates: [
+        "has_short_navigational_instructions",
+        "has_observability_signals",
+        "has_quality_or_debt_tracking",
+      ],
+      nextLevelId: 4,
+    });
+  });
+
+  it("returns Autonomous-Ready only when all hard gates pass", async () => {
+    const ev = await collectEvidence(join(fixturesDir, "strong"));
+    const scoring = scoreProject(ev, { toolsRequested: "all", toolsResolved: ["other"] });
+
+    expect(
+      calculateReadinessLevel(scoring, {
+        has_execution_plans: true,
+        has_short_navigational_instructions: true,
+        has_observability_signals: true,
+        has_quality_or_debt_tracking: true,
+      }),
+    ).toEqual({
+      id: 4,
+      label: "Autonomous-Ready",
+      blockingGateSet: "level4_additional",
+      failedHardGates: [],
+    });
+  });
+
+  it("assigns Baseline when level 1 passes but level 2 hard gates fail", async () => {
+    const ev = await collectEvidence(join(fixturesDir, "baseline"));
+    const scoring = scoreProject(ev, { toolsRequested: "all", toolsResolved: ["other"] });
+
+    expect(calculateReadinessLevel(scoring, ev.levelOnlyChecks)).toEqual({
+      id: 2,
+      label: "Baseline",
+      blockingGateSet: "level2",
+      failedHardGates: [
+        "has_test_dir",
+        "has_test_files",
+        "has_lint_script",
+        "has_typecheck_script",
+        "has_build_script",
+        "has_env_example",
+        "has_docs_index",
+      ],
+      nextLevelId: 3,
+    });
+  });
+
+  it("assigns Autonomous-Ready from fixture evidence when all hard gates pass", async () => {
+    const ev = await collectEvidence(join(fixturesDir, "autonomous"));
+    const scoring = scoreProject(ev, { toolsRequested: "all", toolsResolved: ["other"] });
+
+    expect(calculateReadinessLevel(scoring, ev.levelOnlyChecks)).toEqual({
+      id: 4,
+      label: "Autonomous-Ready",
+      blockingGateSet: "level4_additional",
+      failedHardGates: [],
+    });
+  });
+});
+
+describe("buildStagedFixes", () => {
+  function makeCategoryScore(id: CategoryScore["id"], checks: Array<{ id: string; passed: boolean }>): CategoryScore {
+    return {
+      id,
+      label: id,
+      score: 0,
+      maxScore: 5,
+      checks: checks.map((check) => ({
+        id: check.id,
+        passed: check.passed,
+        weight: 0.1,
+        label: check.id,
+      })),
+      failingChecks: checks
+        .filter((check) => !check.passed)
+        .map((check) => ({
+          id: check.id,
+          passed: false,
+          weight: 0.1,
+          label: check.id,
+        })),
+    };
+  }
+
+  it("orders Now by fix-plan priority and then lexical checkId", () => {
+    const scoring = {
+      categoryScores: [
+        makeCategoryScore("instructions", [
+          { id: "has_generic_skills", passed: false },
+          { id: "has_tool_skills", passed: false },
+        ]),
+        makeCategoryScore("context", [
+          { id: "has_docs_index", passed: false },
+          { id: "has_architecture_docs", passed: false },
+        ]),
+        makeCategoryScore("tooling", [
+          { id: "has_test_files", passed: false },
+          { id: "has_package_json", passed: true },
+        ]),
+        makeCategoryScore("feedback", []),
+        makeCategoryScore("safety", []),
+      ],
+      fixPlan: [
+        { categoryId: "context" as const, checkId: "has_docs_index", action: "fix", effort: "quick" as const, priority: 2 },
+        { categoryId: "tooling" as const, checkId: "has_test_files", action: "fix", effort: "quick" as const, priority: 1 },
+        { categoryId: "context" as const, checkId: "has_architecture_docs", action: "fix", effort: "quick" as const, priority: 3 },
+        { categoryId: "instructions" as const, checkId: "has_generic_skills", action: "fix", effort: "quick" as const, priority: 4 },
+      ],
+    };
+    const level = {
+      id: 2 as const,
+      label: "Baseline" as const,
+      blockingGateSet: "level2" as const,
+      failedHardGates: ["has_docs_index", "has_test_files"],
+      nextLevelId: 3 as const,
+    };
+
+    const staged = buildStagedFixes(scoring, level);
+
+    expect(staged.now).toEqual(["has_test_files", "has_docs_index"]);
+    expect(staged.next).toEqual([
+      "has_architecture_docs",
+      "has_execution_plans",
+      "has_generic_skills",
+      "has_tool_skills",
+    ]);
+    expect(staged.later).toEqual([]);
+  });
+
+  it("caps Next at 4 and keeps only next-level hard gates when hard failures exceed the cap", () => {
+    const scoring = {
+      categoryScores: [
+        makeCategoryScore("instructions", [{ id: "has_generic_skills", passed: false }]),
+        makeCategoryScore("context", [
+          { id: "has_architecture_docs", passed: false },
+          { id: "has_structured_docs", passed: false },
+        ]),
+        makeCategoryScore("tooling", [{ id: "has_architecture_lints", passed: false }]),
+        makeCategoryScore("feedback", [
+          { id: "has_ci_validation", passed: false },
+          { id: "has_e2e_or_smoke_tests", passed: false },
+        ]),
+        makeCategoryScore("safety", []),
+      ],
+      fixPlan: [
+        { categoryId: "context" as const, checkId: "has_architecture_docs", action: "fix", effort: "quick" as const, priority: 1 },
+      ],
+    };
+    const level = {
+      id: 2 as const,
+      label: "Baseline" as const,
+      blockingGateSet: "level2" as const,
+      failedHardGates: ["has_docs_index"],
+      nextLevelId: 3 as const,
+    };
+
+    const staged = buildStagedFixes(
+      scoring,
+      level,
+      { has_execution_plans: false },
+    );
+
+    expect(staged.next).toEqual([
+      "has_architecture_docs",
+      "has_architecture_lints",
+      "has_ci_validation",
+      "has_e2e_or_smoke_tests",
+    ]);
+    expect(staged.later).toEqual(["has_generic_skills"]);
+  });
+
+  it("keeps Next empty for terminal level 4 and moves soft failures to Later", () => {
+    const scoring = {
+      categoryScores: [
+        makeCategoryScore("instructions", [
+          { id: "has_primary_instructions", passed: true },
+          { id: "has_generic_skills", passed: false },
+        ]),
+        makeCategoryScore("context", []),
+        makeCategoryScore("tooling", []),
+        makeCategoryScore("feedback", []),
+        makeCategoryScore("safety", []),
+      ],
+      fixPlan: [
+        {
+          categoryId: "instructions" as const,
+          checkId: "has_generic_skills",
+          action: "fix",
+          effort: "quick" as const,
+          priority: 1,
+        },
+      ],
+    };
+    const level = {
+      id: 4 as const,
+      label: "Autonomous-Ready" as const,
+      blockingGateSet: "level4_additional" as const,
+      failedHardGates: [],
+    };
+
+    const staged = buildStagedFixes(scoring, level, {
+      has_execution_plans: true,
+      has_short_navigational_instructions: true,
+      has_observability_signals: true,
+      has_quality_or_debt_tracking: true,
+    });
+
+    expect(staged.now).toEqual([]);
+    expect(staged.next).toEqual([]);
+    expect(staged.later).toEqual(["has_generic_skills"]);
+  });
+});
+
+describe("capStagedFixesForText", () => {
+  it("caps Now to 3 for level 1 and to 4 for level 2+", () => {
+    const staged = {
+      now: ["a", "b", "c", "d", "e"],
+      next: ["n1", "n2", "n3", "n4", "n5"],
+      later: ["l1"],
+    };
+
+    expect(capStagedFixesForText(staged, 1)).toEqual({
+      now: ["a", "b", "c"],
+      next: ["n1", "n2", "n3", "n4"],
+      later: ["l1"],
+    });
+    expect(capStagedFixesForText(staged, 2)).toEqual({
+      now: ["a", "b", "c", "d"],
+      next: ["n1", "n2", "n3", "n4"],
+      later: ["l1"],
+    });
   });
 });
