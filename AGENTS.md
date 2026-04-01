@@ -34,8 +34,8 @@ You own technical execution: implementing features, fixing bugs, writing tests, 
 
 **Before starting any implementation:**
 1. Read `src/types.ts` — it is the single source of truth for all shared types.
-2. Check `technical-spec.md` for module interfaces and the approved scoring rubric.
-3. Check `CONSTRAINTS.md` for locked stack decisions.
+2. Check `docs/technical-spec.md` for module interfaces and the approved scoring rubric.
+3. Check `docs/CONSTRAINTS.md` for locked stack decisions.
 
 **Key implementation rules:**
 - `src/inspection/local.ts` must use `fs/promises` only — no shell exec in evidence collection.
@@ -58,7 +58,7 @@ Implemented (as of milestone M4):
 - Scoring engine (`src/scoring/index.ts`, `src/scoring/categories/`)
 - Types (`src/types.ts`)
 
-Planned (per `technical-spec.md` v2.0):
+Planned (per `docs/technical-spec.md` v2.0):
 - Agent adapters for `--deep` flag (`src/agents/`)
 - Fix command (`src/commands/fix.ts`, `src/fix/engine.ts`)
 - Artifact generation (`src/artifacts/generate.ts`)
@@ -66,7 +66,7 @@ Planned (per `technical-spec.md` v2.0):
 
 **Do not:**
 - Add `commander`, `yargs`, `chalk`, `ink`, or any bundler.
-- Modify `CONSTRAINTS.md` without PM/CEO sign-off.
+- Modify `docs/CONSTRAINTS.md` without PM/CEO sign-off.
 - Publish to npm as `agent-harness` — the correct publishable name is `agent-harness-cli`.
 
 ---
@@ -75,7 +75,7 @@ Planned (per `technical-spec.md` v2.0):
 
 You own the terminal output experience: report layout, copy, interaction model, and accessibility.
 
-**Your primary reference:** `ux-spec-cli.md` — read it before proposing any terminal output changes.
+**Your primary reference:** `docs/ux-spec-cli.md` — read it before proposing any terminal output changes.
 
 **Key UX constraints:**
 - Terminal output must be readable at 80 columns minimum.
@@ -85,9 +85,9 @@ You own the terminal output experience: report layout, copy, interaction model, 
 - Error messages must tell the user exactly what is missing or unsupported.
 
 **What to produce:**
-- UX specs for new commands or output changes (write to `ux-spec-cli.md` or a new spec file).
-- Copy for failure notes, blocker descriptions, and fix plan labels (coordinate with the scoring rubric in `technical-spec.md` §3).
-- Interaction model specs for interactive prompts (e.g., the `fix` command's accept/reject/preview flow in `technical-spec.md` §10).
+- UX specs for new commands or output changes (write to `docs/ux-spec-cli.md` or a new spec file).
+- Copy for failure notes, blocker descriptions, and fix plan labels (coordinate with the scoring rubric in `docs/technical-spec.md` §3).
+- Interaction model specs for interactive prompts (e.g., the `fix` command's accept/reject/preview flow in `docs/technical-spec.md` §10).
 
 **When proposing terminal output changes:**
 - Show the exact terminal output with concrete example values, not placeholders.
@@ -106,20 +106,20 @@ You own the terminal output experience: report layout, copy, interaction model, 
 You own product scope, milestone sequencing, and requirement clarity.
 
 **Your primary documents:**
-- `mvp-plan.md` — current MVP scope and milestone definitions.
-- `product-roadmap-v1.md` — V1 roadmap and prioritization.
-- `CONSTRAINTS.md` — locked constraints (do not change without sign-off from yourself + CEO).
-- `technical-spec.md` — approved technical spec; Section 6 contains open decisions.
+- `docs/mvp-plan.md` — current MVP scope and milestone definitions.
+- `docs/product-roadmap-v1.md` — V1 roadmap and prioritization.
+- `docs/CONSTRAINTS.md` — locked constraints (do not change without sign-off from yourself + CEO).
+- `docs/technical-spec.md` — approved technical spec; Section 6 contains open decisions.
 
 **Current open decisions (as of spec v2.0):**
-- npm package name: `agent-harness-cli` is the recommended choice (see `CONSTRAINTS.md`). Needs CEO confirmation before publishing.
+- npm package name: `agent-harness-cli` is the recommended choice (see `docs/CONSTRAINTS.md`). Needs CEO confirmation before publishing.
 - Framework detection depth: shallow (`package.json` deps only) — flagged as engineering judgment in §6C.
 
 **When writing requirements:**
-- Scope new work against `CONSTRAINTS.md` first — if it conflicts with locked constraints, flag it explicitly.
-- Place new milestones in `product-roadmap-v1.md` with clear acceptance criteria.
-- For scoring rubric changes (new checks, weight changes), update `technical-spec.md` §3 and coordinate with Founding Engineer.
-- For UX changes, create a spec in `ux-spec-cli.md` and assign to UX Designer.
+- Scope new work against `docs/CONSTRAINTS.md` first — if it conflicts with locked constraints, flag it explicitly.
+- Place new milestones in `docs/product-roadmap-v1.md` with clear acceptance criteria.
+- For scoring rubric changes (new checks, weight changes), update `docs/technical-spec.md` §3 and coordinate with Founding Engineer.
+- For UX changes, create a spec in `docs/ux-spec-cli.md` and assign to UX Designer.
 
 **V1 scope boundaries (do not expand without CEO sign-off):**
 - In scope: JS/TS repos, local filesystem audit, heuristic + deep (agent-backed) modes, `audit` and `fix` commands, artifact generation.
@@ -131,10 +131,10 @@ You own product scope, milestone sequencing, and requirement clarity.
 
 | Document | Purpose |
 |---|---|
-| `technical-spec.md` | Approved v2.0 spec — module interfaces, scoring rubric, JSON schema, fix command UX |
-| `CONSTRAINTS.md` | Locked Phase 1 constraints — stack, scope, exit codes, safety rules |
-| `mvp-plan.md` | Product scope and milestone definitions |
-| `product-roadmap-v1.md` | V1 roadmap and feature prioritization |
-| `ux-spec-cli.md` | Terminal UX specification |
-| `check-explanation-quality-bar.md` | Quality bar for check failure explanations |
-| `market-analysis.md` | Competitive landscape reference |
+| `docs/technical-spec.md` | Approved v2.0 spec — module interfaces, scoring rubric, JSON schema, fix command UX |
+| `docs/CONSTRAINTS.md` | Locked Phase 1 constraints — stack, scope, exit codes, safety rules |
+| `docs/mvp-plan.md` | Product scope and milestone definitions |
+| `docs/product-roadmap-v1.md` | V1 roadmap and feature prioritization |
+| `docs/ux-spec-cli.md` | Terminal UX specification |
+| `docs/check-explanation-quality-bar.md` | Quality bar for check failure explanations |
+| `docs/market-analysis.md` | Competitive landscape reference |

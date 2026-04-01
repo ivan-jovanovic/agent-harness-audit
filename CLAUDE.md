@@ -52,7 +52,7 @@ tests/
 fixtures/                     # minimal, partial, strong, ts-webapp fixture repos
 ```
 
-Planned but not yet implemented (per `technical-spec.md`):
+Planned but not yet implemented (per `docs/technical-spec.md`):
 - `src/agents/` — agent adapters for `--deep` flag
 - `src/commands/fix.ts` — interactive fix command
 - `src/artifacts/generate.ts` — starter file generation
@@ -63,10 +63,10 @@ Planned but not yet implemented (per `technical-spec.md`):
 | File | Purpose |
 |---|---|
 | `src/types.ts` | **Single source of truth** for all types. Read before adding any new types. |
-| `technical-spec.md` | Approved v2.0 spec — module interfaces, scoring rubric, JSON schema. |
-| `CONSTRAINTS.md` | Locked constraints (stack, scope, exit codes). Do not change without sign-off. |
-| `mvp-plan.md` | Product scope and milestone definitions. |
-| `ux-spec-cli.md` | Terminal UX specification — output format, colors, interaction model. |
+| `docs/technical-spec.md` | Approved v2.0 spec — module interfaces, scoring rubric, JSON schema. |
+| `docs/CONSTRAINTS.md` | Locked constraints (stack, scope, exit codes). Do not change without sign-off. |
+| `docs/mvp-plan.md` | Product scope and milestone definitions. |
+| `docs/ux-spec-cli.md` | Terminal UX specification — output format, colors, interaction model. |
 
 ## Scoring Rubric (Quick Reference)
 
@@ -93,8 +93,8 @@ Overall score = weighted sum across categories, normalized to 0–100.
 - **All checks in `inspection/local.ts` use `fs/promises` only — no shell exec.**
 - **Scoring functions are pure** — same input always returns same output.
 - **Never overwrite existing files** — generated artifacts use `.generated.md` suffix and skip if a canonical file exists (e.g., if `AGENTS.md` exists, don't write `AGENTS.generated.md`).
-- **Package name**: `agent-harness` is taken on npm. The publishable name is `agent-harness-cli` (see `CONSTRAINTS.md`). The bin entry name stays `agent-harness`.
-- Scoring weight adjustments: when `--tool claude-code`, boost `has_claude_md` weight from 0.25 to 0.40 in Instructions (see `technical-spec.md` §6A).
+- **Package name**: `agent-harness` is taken on npm. The publishable name is `agent-harness-cli` (see `docs/CONSTRAINTS.md`). The bin entry name stays `agent-harness`.
+- Scoring weight adjustments: when `--tool claude-code`, boost `has_claude_md` weight from 0.25 to 0.40 in Instructions (see `docs/technical-spec.md` §6A).
 
 ## Claude Code Permissions
 
