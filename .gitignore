@@ -1,3 +1,11 @@
 node_modules/
 dist/
 .DS_Store
+
+# Internal planning / evaluation docs not needed in git
+/harness-audit-levels-spec.md
+/harness-engineering-audit-spec.md
+/harness-engineering-implementation-plan.md
+/phase1-portal-evaluation.md
+/phase2-portal-evaluation.md
+/phase25-portal-evaluation.md
