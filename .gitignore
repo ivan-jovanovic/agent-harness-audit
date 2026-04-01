@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .DS_Store
+.idea/
 
 # Internal planning / evaluation docs not needed in git
 /harness-audit-levels-spec.md
