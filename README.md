@@ -1,4 +1,4 @@
-# agent-harness
+# Agent Harness Audit
 
 > Beta: `agent-harness` is still in active development and V1 is not finished
 > yet. Expect gaps, rough edges, and changes in behavior. Review results
